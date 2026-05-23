@@ -317,7 +317,7 @@ function App() {
                 <LabelList
                   dataKey="value"
                   position="right"
-                  formatter={(v: number) => `€${v.toFixed(2)}`}
+                  formatter={(v: unknown) => `€${Number(v).toFixed(2)}`}
                   style={{ fontSize: 12, fill: '#86868b', fontWeight: 500 }}
                 />
               </Bar>
