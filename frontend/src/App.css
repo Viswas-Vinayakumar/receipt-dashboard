@@ -1,3 +1,4 @@
+/* ── Reset & Root ─────────────────────────────────────────────────────────── */
 #root {
   width: 100%;
   max-width: 1100px;
@@ -8,43 +9,77 @@
 .app-container {
   display: flex;
   flex-direction: column;
-  gap: 32px;
+  gap: 28px;
 }
 
-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
+/* ── Animations ───────────────────────────────────────────────────────────── */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes slideUp {
+  from { transform: translate(-50%, 100%); opacity: 0; }
+  to   { transform: translate(-50%, 0);    opacity: 1; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse-green {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5); }
+  50%       { box-shadow: 0 0 0 5px rgba(16, 185, 129, 0); }
+}
+
+@keyframes pulse-amber {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.5); }
+  50%       { box-shadow: 0 0 0 5px rgba(245, 158, 11, 0); }
+}
+
+/* ── Typography ───────────────────────────────────────────────────────────── */
 h1 {
   font-size: 28px;
   font-weight: 700;
   letter-spacing: -0.5px;
+  color: #1d1d1f;
+}
+
+.subtitle {
+  font-size: 14px;
+  color: #86868b;
+  margin-top: 2px;
 }
 
 h3 {
-  font-size: 15px;
+  font-size: 12px;
   font-weight: 600;
   color: #86868b;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 12px;
+  letter-spacing: 0.7px;
+  margin-bottom: 10px;
+}
+
+/* ── Header ───────────────────────────────────────────────────────────────── */
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .action-bar {
   display: flex;
-  gap: 12px;
+  gap: 10px;
 }
 
+/* ── Buttons ──────────────────────────────────────────────────────────────── */
 .btn {
-  padding: 8px 16px;
-  border-radius: 8px;
+  padding: 9px 18px;
+  border-radius: 10px;
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
   border: none;
   display: flex;
   align-items: center;
@@ -59,6 +94,7 @@ h3 {
 .btn-primary:hover {
   background: #0077ed;
   transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 113, 227, 0.35);
 }
 
 .btn-secondary {
@@ -70,74 +106,251 @@ h3 {
   background: #d2d2d7;
 }
 
-.btn-danger {
-  background: #fee2e2;
-  color: #dc2626;
+/* ── Error Banner ─────────────────────────────────────────────────────────── */
+.error-banner {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 12px;
+  padding: 12px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #b91c1c;
+  font-size: 14px;
+  cursor: pointer;
+  animation: fadeInUp 0.25s ease;
 }
 
-.btn-danger:hover {
-  background: #fecaca;
+.error-close {
+  font-size: 12px;
+  opacity: 0.6;
+  padding: 2px 6px;
 }
 
-.dashboard-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 24px;
-}
-
+/* ── Cards ────────────────────────────────────────────────────────────────── */
 .card {
-  background: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.82);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border-radius: 18px;
   padding: 24px;
-  border: 1px solid rgba(0, 0, 0, 0.05);
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 2px 20px rgba(0, 0, 0, 0.05);
+  animation: fadeInUp 0.4s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+/* ── Dashboard Grid (4 stat cards) ───────────────────────────────────────── */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 18px;
+}
+
+@media (max-width: 900px) {
+  .dashboard-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 500px) {
+  .dashboard-grid { grid-template-columns: 1fr; }
+}
+
+.stat-card {
+  padding: 20px 22px;
 }
 
 .stat-value {
-  font-size: 32px;
+  font-size: 30px;
   font-weight: 700;
   color: #1d1d1f;
+  margin-top: 4px;
+  line-height: 1.1;
 }
 
+/* ── Category Badge (Top Category card) ──────────────────────────────────── */
+.category-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cat-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Engine Status (status card) ─────────────────────────────────────────── */
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dot-active {
+  background: #10b981;
+  animation: pulse-green 2s ease-in-out infinite;
+}
+
+.dot-warn {
+  background: #f59e0b;
+  animation: pulse-amber 2s ease-in-out infinite;
+}
+
+.dot-error {
+  background: #ef4444;
+}
+
+/* ── Chart Card ───────────────────────────────────────────────────────────── */
+.chart-card h3 {
+  margin-bottom: 16px;
+}
+
+.chart-tip {
+  background: #1d1d1f;
+  color: #fff;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+/* ── Upload Card ──────────────────────────────────────────────────────────── */
 .upload-zone {
   border: 2px dashed #d2d2d7;
-  border-radius: 12px;
-  padding: 40px;
+  border-radius: 14px;
+  padding: 40px 32px;
   text-align: center;
   cursor: pointer;
-  background: #fff;
-  transition: all 0.3s ease;
+  background: #fafafa;
+  transition: border-color 0.2s, background 0.2s;
 }
 
 .upload-zone:hover {
   border-color: #0071e3;
-  background: rgba(0, 113, 227, 0.02);
+  background: rgba(0, 113, 227, 0.03);
+}
+
+.upload-icon {
+  font-size: 36px;
+  margin-bottom: 10px;
+  color: #86868b;
+  line-height: 1;
+}
+
+.upload-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1d1d1f;
+  margin: 0 0 6px;
+}
+
+.upload-hint {
+  font-size: 13px;
+  color: #86868b;
+  margin: 0;
+}
+
+.upload-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  color: #86868b;
+  font-size: 14px;
+}
+
+.upload-loading p {
+  margin: 0;
+}
+
+/* ── Transactions ─────────────────────────────────────────────────────────── */
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.section-header h3 {
+  margin-bottom: 0;
+}
+
+.tx-count {
+  font-size: 12px;
+  color: #86868b;
+  background: #f5f5f7;
+  border-radius: 20px;
+  padding: 3px 10px;
 }
 
 table {
   width: 100%;
   border-collapse: collapse;
+  margin-top: 8px;
 }
 
 th {
   text-align: left;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: #86868b;
-  padding: 12px 16px;
-  border-bottom: 1px solid #f5f5f7;
+  padding: 10px 14px;
+  border-bottom: 1px solid #f0f0f5;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
 }
 
 td {
-  padding: 16px;
-  font-size: 15px;
+  padding: 14px;
+  font-size: 14px;
   border-bottom: 1px solid #f5f5f7;
+  color: #1d1d1f;
 }
 
 tr:last-child td {
   border-bottom: none;
+}
+
+.tx-row {
+  animation: fadeInUp 0.35s cubic-bezier(0.4, 0, 0.2, 1) both;
+  transition: background 0.15s;
+}
+
+.tx-row:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.tx-cat-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 8px;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+.tx-date {
+  color: #86868b;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.tx-amount {
+  font-weight: 600;
+  color: #1d1d1f;
+  white-space: nowrap;
 }
 
 .delete-btn {
@@ -147,11 +360,12 @@ tr:last-child td {
   background: transparent;
   color: #dc2626;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.15s;
   border: none;
+  font-size: 13px;
 }
 
-tr:hover .delete-btn {
+.tx-row:hover .delete-btn {
   opacity: 1;
 }
 
@@ -159,7 +373,30 @@ tr:hover .delete-btn {
   background: #fee2e2;
 }
 
-/* Toast Notification */
+/* ── Empty State ──────────────────────────────────────────────────────────── */
+.empty-state {
+  text-align: center;
+  padding: 48px 16px !important;
+}
+
+.empty-icon {
+  font-size: 36px;
+  margin-bottom: 12px;
+  opacity: 0.6;
+}
+
+.empty-state p {
+  margin: 0;
+  color: #86868b;
+  font-size: 15px;
+}
+
+.empty-hint {
+  font-size: 13px !important;
+  margin-top: 4px !important;
+}
+
+/* ── Toast ────────────────────────────────────────────────────────────────── */
 .toast {
   position: fixed;
   bottom: 32px;
@@ -167,39 +404,47 @@ tr:hover .delete-btn {
   transform: translateX(-50%);
   background: #1d1d1f;
   color: white;
-  padding: 12px 24px;
+  padding: 12px 20px;
   border-radius: 12px;
   display: flex;
   align-items: center;
   gap: 16px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22);
   z-index: 1000;
+  font-size: 14px;
   animation: slideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-@keyframes slideUp {
-  from { transform: translate(-50%, 100%); opacity: 0; }
-  to { transform: translate(-50%, 0); opacity: 1; }
+  white-space: nowrap;
 }
 
 .undo-btn {
-  color: #0071e3;
+  color: #60a5fa;
   background: transparent;
   border: none;
   font-weight: 600;
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 2px 6px;
+  font-size: 14px;
 }
 
+.undo-btn:hover {
+  color: #93c5fd;
+}
+
+/* ── Section cards ────────────────────────────────────────────────────────── */
+.upload-card h3 {
+  margin-bottom: 12px;
+}
+
+.transactions-card {
+  padding: 20px 24px;
+}
+
+/* ── Spinner ──────────────────────────────────────────────────────────────── */
 .loading-spinner {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   border: 2px solid rgba(0, 113, 227, 0.2);
   border-top-color: #0071e3;
   border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
+  animation: spin 0.7s linear infinite;
 }

@@ -22,5 +22,6 @@ src-tauri/bin/*
 
 # OS
 .DS_Store
-uploads/*
-!uploads/.gitkeep
+
+# App runtime data (logs, DB, uploaded receipt images)
+app_data/

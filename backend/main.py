@@ -3,25 +3,45 @@ import shutil
 import json
 from datetime import datetime
 from typing import List, Optional
+import logging
 
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from dotenv import load_dotenv
 import google.generativeai as genai
 from pydantic import BaseModel
 
 import models
-from database import engine, get_db
+from database import engine, get_db, DATA_DIR
 
-load_dotenv()
+# Set up logging to file
+log_file = os.path.join(DATA_DIR, "backend.log")
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Hardcoded API key for stability in sidecar mode
+GEMINI_API_KEY = "AIzaSyCX3GP_zGQpkI-eB4YbxKKppiutuVR3NFs"
+
+logger.info("Initializing Backend...")
 
 # Initialize Database
-models.Base.metadata.create_all(bind=engine)
+try:
+    models.Base.metadata.create_all(bind=engine)
+    logger.info("Database initialized successfully")
+except Exception as e:
+    logger.error(f"Database initialization failed: {e}")
 
 # Initialize Gemini
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel("gemini-1.5-pro")
+genai.configure(api_key=GEMINI_API_KEY)
+# Switch to gemini-2.5-flash for 2026 compatibility
+model = genai.GenerativeModel("gemini-2.5-flash")
 
 app = FastAPI()
 
@@ -34,7 +54,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-UPLOAD_DIR = os.path.expanduser("~/receipt-dashboard/uploads")
+UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 class ReceiptItem(BaseModel):
@@ -49,12 +69,22 @@ class ReceiptExtraction(BaseModel):
     total_amount: float
     items: List[ReceiptItem]
 
+@app.get("/api/health")
+async def health_check():
+    logger.info("Health check ping received")
+    return {"status": "ok"}
+
 @app.post("/api/upload")
 async def upload_receipt(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    logger.info(f"Received upload request: {file.filename}")
     # Save file
     file_path = os.path.join(UPLOAD_DIR, f"{datetime.now().timestamp()}_{file.filename}")
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
+
+    # Detect mime type
+    mime_type = file.content_type or "image/jpeg"
+    logger.info(f"Processing with mime type: {mime_type}")
 
     # Process with Gemini
     try:
@@ -63,22 +93,23 @@ async def upload_receipt(file: UploadFile = File(...), db: Session = Depends(get
             image_data = f.read()
 
         prompt = """
-        Analyze this receipt image accurately. 
-        Extract the following details:
-        - Merchant name
-        - Location/Address
-        - Date of purchase
-        - Total amount
-        - List of items (product name, category, price)
-        
-        The receipt may be in German or English. Translate categories and product names to English if they are in German.
-        Categories should be general (e.g., Groceries, Electronics, Dining, Transport, Health, Others).
-        
-        Return the result as a strict JSON object following this schema:
+        Analyze this receipt image accurately and extract structured data.
+
+        Rules:
+        1. merchant: The COMPLETE store name as printed in the header, including branch or city suffix (e.g. "Kaufland Berlin-Heinersdorf", NOT just "Kaufland").
+        2. location: Full street address of the store.
+        3. date: Convert any date format to strict ISO 8601 — YYYY-MM-DD only (e.g. "18.05.2026" → "2026-05-18", "22.05.26" → "2026-05-22").
+        4. total_amount: The final amount paid (Summe / Gesamtbetrag / Total) as a decimal number. Do NOT include tax breakdown lines.
+        5. items: Only individual product line items with their listed price. Exclude payment info, TSE data, tax rows, and subtotals.
+
+        The receipt may be in German or English. Translate product names to English.
+        Each item's category must be exactly one of: Groceries, Bakery, Beverages, Electronics, Dining, Transport, Health, Deposit, Others.
+
+        Return ONLY a valid JSON object — no markdown, no explanation:
         {
           "merchant": "string",
           "location": "string",
-          "date": "string",
+          "date": "YYYY-MM-DD",
           "total_amount": number,
           "items": [
             {"product_name": "string", "category": "string", "price": number}
@@ -86,12 +117,14 @@ async def upload_receipt(file: UploadFile = File(...), db: Session = Depends(get
         }
         """
 
+        logger.info("Sending request to Gemini AI...")
         response = model.generate_content(
-            [prompt, {"mime_type": "image/jpeg", "data": image_data}],
+            [prompt, {"mime_type": mime_type, "data": image_data}],
             generation_config={"response_mime_type": "application/json"}
         )
         
         extracted_data = json.loads(response.text)
+        logger.info(f"Gemini AI extracted data: {extracted_data['merchant']}")
         extraction = ReceiptExtraction(**extracted_data)
 
         # Save to Database
@@ -116,34 +149,38 @@ async def upload_receipt(file: UploadFile = File(...), db: Session = Depends(get
             db.add(db_item)
         
         db.commit()
+        logger.info("Data saved to database successfully")
 
         return {"status": "success", "data": extraction}
 
     except Exception as e:
-        print(f"Error processing receipt: {e}")
+        logger.error(f"Error processing receipt: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/dashboard")
 async def get_dashboard_data(db: Session = Depends(get_db)):
-    receipts = db.query(models.Receipt).all()
+    logger.info("Fetching dashboard data")
+    receipts = db.query(models.Receipt).order_by(models.Receipt.upload_date.desc()).all()
     items = db.query(models.Item).all()
 
     total_spent = sum(r.total_amount for r in receipts)
-    
+    receipt_count = len(receipts)
+
     category_spend = {}
     for item in items:
         category_spend[item.category] = category_spend.get(item.category, 0) + item.price
 
-    # Top spending category
     top_category = max(category_spend, key=category_spend.get) if category_spend else "N/A"
 
-    recent_receipts = db.query(models.Receipt).order_by(models.Receipt.upload_date.desc()).limit(5).all()
-    
-    # Format for chart
-    chart_data = [{"name": cat, "value": amt} for cat, amt in category_spend.items()]
+    # Sort categories by spend descending for chart
+    chart_data = sorted(
+        [{"name": cat, "value": round(amt, 2)} for cat, amt in category_spend.items()],
+        key=lambda x: x["value"], reverse=True
+    )
 
     return {
         "total_spent": round(total_spent, 2),
+        "receipt_count": receipt_count,
         "top_category": top_category,
         "category_spend": chart_data,
         "recent_receipts": [
@@ -152,7 +189,7 @@ async def get_dashboard_data(db: Session = Depends(get_db)):
                 "merchant": r.merchant,
                 "date": r.date,
                 "total_amount": r.total_amount
-            } for r in recent_receipts
+            } for r in receipts
         ]
     }
 
@@ -213,4 +250,21 @@ async def reset_data(db: Session = Depends(get_db)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import subprocess
+    import time
+
+    # Try to clear port 8888 safely
+    try:
+        current_pid = str(os.getpid())
+        pids = subprocess.check_output("lsof -ti :8888", shell=True).decode().split()
+        killed = False
+        for p in pids:
+            if p != current_pid:
+                subprocess.run(f"kill -9 {p}", shell=True)
+                killed = True
+        if killed:
+            time.sleep(0.5)  # Allow kernel to fully release the port before binding
+    except:
+        pass
+
+    uvicorn.run(app, host="127.0.0.1", port=8888)

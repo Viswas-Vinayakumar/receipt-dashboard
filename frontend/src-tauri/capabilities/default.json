@@ -6,6 +6,39 @@
     "main"
   ],
   "permissions": [
-    "core:default"
+    "core:default",
+    "shell:default",
+    "http:default",
+    {
+      "identifier": "http:allow-fetch",
+      "allow": [
+        {
+          "url": "http://127.0.0.1:8888/*"
+        },
+        {
+          "url": "http://localhost:8888/*"
+        }
+      ]
+    },
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "args": [],
+          "name": "backend",
+          "sidecar": true
+        }
+      ]
+    },
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "args": [],
+          "name": "backend",
+          "sidecar": true
+        }
+      ]
+    }
   ]
 }
