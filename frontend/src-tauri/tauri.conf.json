@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ReceiptDashboard",
+  "productName": "Rezet",
   "version": "0.1.0",
   "identifier": "com.receiptdashboard.app",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Receipt Dashboard",
+        "title": "Rezet",
         "width": 1100,
         "height": 800,
         "resizable": true,

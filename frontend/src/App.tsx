@@ -82,8 +82,12 @@ function App() {
   const [loading, setLoading]                 = useState(false)
   const [error, setError]                     = useState<string | null>(null)
   const [rateLimitWarn, setRateLimitWarn]     = useState<string | null>(null)
+  const [retryAfter, setRetryAfter]           = useState<number | null>(null)
   const [toast, setToast]                     = useState<Toast | null>(null)
   const [connectionStatus, setConnectionStatus] = useState('Initializing...')
+
+  const retryFilesRef = useRef<File[]>([])
+  const retryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // ── Upload panel ────────────────────────────────────────────────────────
   const [showUpload, setShowUpload]           = useState(false)
@@ -129,6 +133,33 @@ function App() {
     setToast({ message, onUndo, id: Date.now() })
     if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current)
     undoTimeoutRef.current = setTimeout(() => setToast(null), 5000)
+  }
+
+  // ── Retry helpers ────────────────────────────────────────────────────────
+  const stopRetry = () => {
+    if (retryTimerRef.current) { clearInterval(retryTimerRef.current); retryTimerRef.current = null }
+    setRetryAfter(null)
+    retryFilesRef.current = []
+  }
+
+  // Forward declaration — doUploadFiles is defined below; the interval callback
+  // only fires after all declarations complete, so the closure is safe.
+  const startRetryCountdown = (seconds: number, files: File[]) => {
+    stopRetry()
+    retryFilesRef.current = files
+    setRetryAfter(seconds)
+    retryTimerRef.current = setInterval(() => {
+      setRetryAfter(prev => {
+        if (prev === null || prev <= 1) {
+          clearInterval(retryTimerRef.current!)
+          retryTimerRef.current = null
+          doUploadFiles(retryFilesRef.current)
+          retryFilesRef.current = []
+          return null
+        }
+        return prev - 1
+      })
+    }, 1000)
   }
 
   // ── Fetch dashboard data ─────────────────────────────────────────────────
@@ -177,7 +208,7 @@ function App() {
 
         command.on('error', (_err: string) => {
           if (cancelled) return
-          setError(`macOS blocked the AI engine. Open Terminal and run:\n  xattr -dr com.apple.quarantine "/Applications/ReceiptDashboard.app"\nthen relaunch the app.`)
+          setError(`macOS blocked the AI engine. Open Terminal and run:\n  xattr -dr com.apple.quarantine "/Applications/Rezet.app"\nthen relaunch the app.`)
           setConnectionStatus('Security Blocked')
         })
 
@@ -202,7 +233,7 @@ function App() {
         }
       } catch (err) {
         started = false
-        setError(`macOS blocked the AI engine. Open Terminal and run:\n  xattr -dr com.apple.quarantine "/Applications/ReceiptDashboard.app"\nthen relaunch.`)
+        setError(`macOS blocked the AI engine. Open Terminal and run:\n  xattr -dr com.apple.quarantine "/Applications/Rezet.app"\nthen relaunch.`)
         setConnectionStatus('Security Blocked')
       }
     }
@@ -220,18 +251,17 @@ function App() {
   }
 
   // ── AI Upload ────────────────────────────────────────────────────────────
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || [])
+  const doUploadFiles = async (files: File[]) => {
     if (!files.length) return
+    stopRetry()
     setLoading(true); setError(null); setRateLimitWarn(null); setUploadErr(null)
     let ok = 0
     const errs: string[] = []
-    const rateLimitMsgs: string[] = []
 
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
-        setUploadStatus(files.length > 1 ? `Analyzing ${i + 1} of ${files.length}…` : 'Gemini AI is analyzing your receipt…')
+        setUploadStatus(files.length > 1 ? `Analyzing ${i + 1} of ${files.length}…` : 'Analyzing your receipt…')
         try {
           const buf  = await file.arrayBuffer()
           const form = new FormData()
@@ -244,14 +274,19 @@ function App() {
                 msg: "This image doesn't look like a receipt. Try a clearer photo, or enter the details manually.",
                 isNotReceipt: true
               })
+              errs.push('not_a_receipt')
             } else if (status === 429) {
-              rateLimitMsgs.push(msg)
-            } else if (status === 401) {
-              setError(msg)
-            } else if (status === 503) {
-              setError(msg)
+              // Backend returns "rate_limit:<seconds>" — parse it
+              const m = msg.match(/rate_limit:(\d+)/)
+              const wait = m ? parseInt(m[1]) : 62
+              setLoading(false); setUploadStatus('')
+              if (fileInputRef.current) fileInputRef.current.value = ''
+              startRetryCountdown(wait, files.slice(i))
+              return
+            } else if (status === 401 || status === 503) {
+              setError(msg); errs.push(msg)
             } else {
-              throw new Error(msg)
+              errs.push(msg || 'Upload failed')
             }
           } else {
             ok++
@@ -263,21 +298,25 @@ function App() {
 
       await fetchData()
 
-      if (rateLimitMsgs.length) setRateLimitWarn(rateLimitMsgs[0])
-
-      if (!errs.length && !rateLimitMsgs.length && !uploadErr) {
+      const realErrs = errs.filter(e => e !== 'not_a_receipt')
+      if (!realErrs.length && !uploadErr) {
         setShowUpload(false)
         showToast(ok === 1 ? 'Receipt scanned successfully' : `${ok} receipts scanned`)
-      } else if (errs.length) {
-        setError(errs.length === 1 ? errs[0] : `${errs.length} of ${files.length} failed — ${errs.join('; ')}`)
-        if (ok > 0) showToast(`${ok} of ${files.length} receipts processed`)
       } else if (ok > 0) {
         showToast(`${ok} of ${files.length} receipts processed`)
+      } else if (realErrs.length) {
+        setError(realErrs.length === 1 ? realErrs[0] : `${realErrs.length} of ${files.length} failed — ${realErrs.join('; ')}`)
       }
     } finally {
       setLoading(false); setUploadStatus('')
       if (fileInputRef.current) fileInputRef.current.value = ''
     }
+  }
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
+    await doUploadFiles(files)
   }
 
   // ── Manual entry helpers ─────────────────────────────────────────────────
@@ -502,7 +541,7 @@ function App() {
         <div className="brand">
           <LogoIcon size={42} />
           <div>
-            <h1>Receipt Dashboard</h1>
+            <h1>Rezet</h1>
             <p className="subtitle">Your spending at a glance</p>
           </div>
         </div>
@@ -660,13 +699,26 @@ function App() {
               <input type="file" ref={fileInputRef} onChange={handleUpload}
                 style={{ display: 'none' }} accept="image/*" multiple />
               <div
-                className={`upload-zone${loading ? ' loading' : ''}`}
-                onClick={() => !loading && fileInputRef.current?.click()}
+                className={`upload-zone${loading ? ' loading' : ''}${retryAfter !== null ? ' retrying' : ''}`}
+                onClick={() => !loading && retryAfter === null && fileInputRef.current?.click()}
               >
-                {loading ? (
+                {retryAfter !== null ? (
+                  <div className="upload-loading">
+                    <div className="retry-ring">
+                      <span className="retry-num">{retryAfter}</span>
+                    </div>
+                    <p className="retry-label">Rate limit hit — retrying in {retryAfter}s</p>
+                    <p className="retry-hint">Auto-retry in progress</p>
+                    <button
+                      className="btn btn-secondary"
+                      style={{ marginTop: 4 }}
+                      onClick={e => { e.stopPropagation(); stopRetry() }}
+                    >Cancel</button>
+                  </div>
+                ) : loading ? (
                   <div className="upload-loading">
                     <div className="loading-spinner" />
-                    <p>{uploadStatus || 'Gemini AI is reading your receipt…'}</p>
+                    <p>{uploadStatus || 'Analyzing your receipt…'}</p>
                   </div>
                 ) : (
                   <>

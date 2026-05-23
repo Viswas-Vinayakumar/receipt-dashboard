@@ -405,6 +405,45 @@ header {
 
 .upload-loading p { margin: 0; }
 
+/* ── Retry countdown ring ──────────────────────────────────────────────────── */
+@keyframes retry-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.45); }
+  50%       { box-shadow: 0 0 0 10px rgba(245, 158, 11, 0); }
+}
+
+.upload-zone.retrying { cursor: default; background: #fffbf0; border-color: #fbbf24; }
+
+.retry-ring {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 3px solid #fbbf24;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: retry-pulse 1.4s ease-in-out infinite;
+}
+
+.retry-num {
+  font-size: 22px;
+  font-weight: 700;
+  color: #b45309;
+  font-variant-numeric: tabular-nums;
+}
+
+.retry-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #92400e;
+  margin: 0;
+}
+
+.retry-hint {
+  font-size: 12px;
+  color: #b45309;
+  margin: 0;
+}
+
 /* Upload error block */
 .upload-err-block {
   background: #fef9f0;
