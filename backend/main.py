@@ -5,7 +5,7 @@ import json
 import time
 from collections import defaultdict
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 import logging
 
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
@@ -22,7 +22,10 @@ log_file = os.path.join(DATA_DIR, "backend.log")
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.FileHandler(log_file), logging.StreamHandler()]
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 logger.info("Initializing Backend...")
@@ -45,25 +48,31 @@ def load_api_key() -> str:
     if key:
         logger.info("Loaded Gemini API key from environment variable")
         return key
-    logger.error("No Gemini API key found.")
+    logger.error("No Gemini API key found. Create ~/receipt-dashboard/app_data/config.json with {\"gemini_api_key\": \"YOUR_KEY\"}")
     return ""
 
 GEMINI_API_KEY = load_api_key()
-genai.configure(api_key=GEMINI_API_KEY)
-gemini_model = genai.GenerativeModel("gemini-2.0-flash")
 
-# ── Database ───────────────────────────────────────────────────────────────
+# ── Database init ──────────────────────────────────────────────────────────
 try:
     models.Base.metadata.create_all(bind=engine)
     logger.info("Database initialized successfully")
 except Exception as e:
     logger.error(f"Database initialization failed: {e}")
 
+# ── Gemini model ───────────────────────────────────────────────────────────
+genai.configure(api_key=GEMINI_API_KEY)
+# gemini-2.0-flash: 3-4× faster than 2.5-flash, free tier = 1500 requests/day
+model = genai.GenerativeModel("gemini-2.0-flash")
+
 app = FastAPI()
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
@@ -86,7 +95,7 @@ class ReceiptExtraction(BaseModel):
 class ManualReceiptIn(BaseModel):
     merchant: str
     location: str = ""
-    date: str
+    date: str          # YYYY-MM-DD
     total_amount: float
     items: List[ReceiptItem] = []
 
@@ -98,98 +107,122 @@ class EditReceiptIn(BaseModel):
     items: List[ReceiptItem] = []
 
 # ── Helpers ────────────────────────────────────────────────────────────────
-PROMPT = """Analyze this image and determine if it is a receipt (retail, grocery, restaurant, pharmacy, transport, etc.).
-
-If it is NOT a receipt (e.g. a selfie, landscape, screenshot, document, or unrelated photo):
-Return ONLY valid JSON: {"is_receipt": false}
-
-If it IS a receipt, extract all fields accurately.
-
-Rules:
-1. merchant: The COMPLETE store name as printed in the header (e.g. "Kaufland Berlin-Heinersdorf", NOT just "Kaufland").
-2. location: Full street address of the store.
-3. date: Convert any date format to strict ISO 8601 — YYYY-MM-DD only (e.g. "18.05.2026" → "2026-05-18").
-4. total_amount: The final amount paid as a decimal number. Do NOT include tax breakdown lines.
-5. items: Only individual product line items with their listed price. Exclude payment info, tax rows, and subtotals.
-
-The receipt may be in German or English. Translate product names to English.
-Each item's category must be exactly one of: Groceries, Bakery, Beverages, Electronics, Dining, Transport, Health, Deposit, Others.
-
-Return ONLY a valid JSON object — no markdown, no explanation, no code fences:
-{
-  "is_receipt": true,
-  "merchant": "string",
-  "location": "string",
-  "date": "YYYY-MM-DD",
-  "total_amount": number,
-  "items": [{"product_name": "string", "category": "string", "price": number}]
-}"""
-
-
-def _parse_retry_after(err_str: str) -> int:
-    """Extract retry-after seconds from a Gemini rate-limit error string."""
+def _parse_retry_wait(err_str: str, default: float = 65.0) -> float:
     m = re.search(r'retry[_ ]in[_ ](\d+(?:\.\d+)?)', err_str, re.IGNORECASE)
-    return int(float(m.group(1))) + 2 if m else 62
-
+    return float(m.group(1)) + 2 if m else default
 
 def _is_rate_limit(exc: Exception) -> bool:
-    s = str(exc)
-    return "429" in s or "quota" in s.lower() or "ResourceExhausted" in type(exc).__name__
-
+    err_str = str(exc)
+    return (
+        "429" in err_str
+        or "quota" in err_str.lower()
+        or "ResourceExhausted" in type(exc).__name__
+    )
 
 def _is_invalid_key(exc: Exception) -> bool:
-    s = str(exc)
-    return any(c in s for c in ("400", "401", "403", "API_KEY_INVALID"))
-
+    err_str = str(exc)
+    return "400" in err_str or "401" in err_str or "403" in err_str or "API_KEY_INVALID" in err_str
 
 # ── Routes ─────────────────────────────────────────────────────────────────
 @app.get("/api/health")
 async def health_check():
+    logger.info("Health check ping received")
     return {"status": "ok"}
-
 
 @app.post("/api/upload")
 async def upload_receipt(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    logger.info(f"Upload request: {file.filename}")
+    logger.info(f"Received upload request: {file.filename}")
 
     if not GEMINI_API_KEY:
-        raise HTTPException(status_code=503,
-            detail="No Gemini API key configured. Add your key to app_data/config.json.")
+        raise HTTPException(
+            status_code=503,
+            detail="No Gemini API key configured. Add your key to app_data/config.json."
+        )
 
     file_path = os.path.join(UPLOAD_DIR, f"{datetime.now().timestamp()}_{file.filename}")
-    with open(file_path, "wb") as buf:
-        shutil.copyfileobj(file.file, buf)
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
 
     mime_type = file.content_type or "image/jpeg"
+    logger.info(f"Processing with mime type: {mime_type}")
 
     try:
         with open(file_path, "rb") as f:
             image_data = f.read()
 
-        logger.info("Calling Gemini AI...")
-        try:
-            response = gemini_model.generate_content(
-                [PROMPT, {"mime_type": mime_type, "data": image_data}],
-                generation_config={"response_mime_type": "application/json"}
-            )
-        except Exception as exc:
-            if _is_rate_limit(exc):
-                wait = _parse_retry_after(str(exc))
-                logger.warning(f"Gemini rate limit — retry in {wait}s")
-                # Return immediately so the frontend can show the countdown.
-                # Detail format: "rate_limit:<seconds>" — parsed by the frontend.
-                raise HTTPException(status_code=429, detail=f"rate_limit:{wait}")
-            if _is_invalid_key(exc):
-                raise HTTPException(status_code=401,
-                    detail="Gemini API key is invalid. Update app_data/config.json.")
-            logger.error(f"Gemini error: {exc}")
-            raise HTTPException(status_code=500, detail=f"AI processing failed: {exc}")
+        prompt = """
+        Analyze this image and determine if it is a receipt (retail, grocery, restaurant, pharmacy, transport, etc.).
+
+        If it is NOT a receipt (e.g. a selfie, landscape, screenshot, document, or unrelated photo):
+        Return ONLY: {"is_receipt": false}
+
+        If it IS a receipt, extract all fields accurately:
+
+        Rules:
+        1. merchant: The COMPLETE store name as printed in the header, including branch or city suffix (e.g. "Kaufland Berlin-Heinersdorf", NOT just "Kaufland").
+        2. location: Full street address of the store.
+        3. date: Convert any date format to strict ISO 8601 — YYYY-MM-DD only (e.g. "18.05.2026" → "2026-05-18").
+        4. total_amount: The final amount paid (Summe / Gesamtbetrag / Total) as a decimal number. Do NOT include tax breakdown lines.
+        5. items: Only individual product line items with their listed price. Exclude payment info, TSE data, tax rows, and subtotals.
+
+        The receipt may be in German or English. Translate product names to English.
+        Each item's category must be exactly one of: Groceries, Bakery, Beverages, Electronics, Dining, Transport, Health, Deposit, Others.
+
+        Return ONLY a valid JSON object — no markdown, no explanation:
+        {
+          "is_receipt": true,
+          "merchant": "string",
+          "location": "string",
+          "date": "YYYY-MM-DD",
+          "total_amount": number,
+          "items": [
+            {"product_name": "string", "category": "string", "price": number}
+          ]
+        }
+        """
+
+        logger.info("Sending request to Gemini AI...")
+        response = None
+        last_err = None
+
+        for attempt in range(3):
+            try:
+                response = model.generate_content(
+                    [prompt, {"mime_type": mime_type, "data": image_data}],
+                    generation_config={"response_mime_type": "application/json"}
+                )
+                last_err = None
+                break
+            except Exception as exc:
+                last_err = exc
+                if _is_rate_limit(exc) and attempt < 2:
+                    wait = _parse_retry_wait(str(exc))
+                    if wait > 300:
+                        logger.warning(f"Gemini daily quota exceeded. Wait: {wait:.0f}s")
+                        break
+                    logger.info(f"Rate limit — waiting {wait:.0f}s (attempt {attempt+1}/3)...")
+                    time.sleep(wait)
+                    continue
+                break
+
+        if last_err is not None:
+            if _is_rate_limit(last_err):
+                wait_sec = int(_parse_retry_wait(str(last_err)))
+                if wait_sec > 300:
+                    raise HTTPException(status_code=429, detail=f"Daily quota reached. The free tier allows 20 scans/day. Try again tomorrow or enter receipt manually.")
+                raise HTTPException(status_code=429, detail=f"Gemini is busy — try again in {wait_sec}s, or enter receipt manually.")
+            if _is_invalid_key(last_err):
+                raise HTTPException(status_code=401, detail="Gemini API key is invalid or revoked. Update app_data/config.json with a valid key.")
+            raise HTTPException(status_code=500, detail=f"AI processing failed: {str(last_err)}")
 
         raw = json.loads(response.text)
 
+        # Not a receipt
         if not raw.get("is_receipt", True):
-            try: os.remove(file_path)
-            except Exception: pass
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
             raise HTTPException(status_code=400, detail="not_a_receipt")
 
         extraction = ReceiptExtraction(**raw)
@@ -201,7 +234,9 @@ async def upload_receipt(file: UploadFile = File(...), db: Session = Depends(get
             date=extraction.date,
             total_amount=extraction.total_amount
         )
-        db.add(db_receipt); db.commit(); db.refresh(db_receipt)
+        db.add(db_receipt)
+        db.commit()
+        db.refresh(db_receipt)
 
         for item in extraction.items:
             db.add(models.Item(
@@ -217,20 +252,30 @@ async def upload_receipt(file: UploadFile = File(...), db: Session = Depends(get
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
+        logger.error(f"Error processing receipt: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/receipts/manual")
 async def add_manual_receipt(data: ManualReceiptIn, db: Session = Depends(get_db)):
+    """Add a receipt manually without an image."""
     db_receipt = models.Receipt(
-        image_path="", merchant=data.merchant, location=data.location,
-        date=data.date, total_amount=data.total_amount
+        image_path="",
+        merchant=data.merchant,
+        location=data.location,
+        date=data.date,
+        total_amount=data.total_amount
     )
-    db.add(db_receipt); db.commit(); db.refresh(db_receipt)
+    db.add(db_receipt)
+    db.commit()
+    db.refresh(db_receipt)
     for item in data.items:
-        db.add(models.Item(receipt_id=db_receipt.id,
-            product_name=item.product_name, category=item.category, price=item.price))
+        db.add(models.Item(
+            receipt_id=db_receipt.id,
+            product_name=item.product_name,
+            category=item.category,
+            price=item.price
+        ))
     db.commit()
     logger.info(f"Manual receipt added: {data.merchant}")
     return {"status": "success", "id": db_receipt.id}
@@ -238,15 +283,22 @@ async def add_manual_receipt(data: ManualReceiptIn, db: Session = Depends(get_db
 
 @app.put("/api/receipts/{receipt_id}")
 async def edit_receipt(receipt_id: int, data: EditReceiptIn, db: Session = Depends(get_db)):
+    """Edit an existing receipt's details and items."""
     receipt = db.query(models.Receipt).filter(models.Receipt.id == receipt_id).first()
     if not receipt:
         raise HTTPException(status_code=404, detail="Receipt not found")
-    receipt.merchant = data.merchant; receipt.location = data.location
-    receipt.date = data.date; receipt.total_amount = data.total_amount
+    receipt.merchant    = data.merchant
+    receipt.location    = data.location
+    receipt.date        = data.date
+    receipt.total_amount = data.total_amount
     db.query(models.Item).filter(models.Item.receipt_id == receipt_id).delete()
     for item in data.items:
-        db.add(models.Item(receipt_id=receipt_id,
-            product_name=item.product_name, category=item.category, price=item.price))
+        db.add(models.Item(
+            receipt_id=receipt_id,
+            product_name=item.product_name,
+            category=item.category,
+            price=item.price
+        ))
     db.commit()
     logger.info(f"Receipt {receipt_id} updated: {data.merchant}")
     return {"status": "success"}
@@ -254,10 +306,13 @@ async def edit_receipt(receipt_id: int, data: EditReceiptIn, db: Session = Depen
 
 @app.get("/api/dashboard")
 async def get_dashboard_data(db: Session = Depends(get_db)):
+    logger.info("Fetching dashboard data")
     receipts = db.query(models.Receipt).order_by(models.Receipt.upload_date.desc()).all()
     items    = db.query(models.Item).all()
 
-    total_spent  = sum(r.total_amount for r in receipts)
+    total_spent    = sum(r.total_amount for r in receipts)
+    receipt_count  = len(receipts)
+
     category_data: dict = {}
     receipt_categories: dict = {}
     monthly: dict = defaultdict(float)
@@ -267,7 +322,9 @@ async def get_dashboard_data(db: Session = Depends(get_db)):
             category_data[item.category] = {"amount": 0.0, "count": 0}
         category_data[item.category]["amount"] += item.price
         category_data[item.category]["count"]  += 1
-        rc = receipt_categories.setdefault(item.receipt_id, {})
+        if item.receipt_id not in receipt_categories:
+            receipt_categories[item.receipt_id] = {}
+        rc = receipt_categories[item.receipt_id]
         rc[item.category] = rc.get(item.category, 0.0) + item.price
 
     for r in receipts:
@@ -276,27 +333,35 @@ async def get_dashboard_data(db: Session = Depends(get_db)):
 
     top_category = max(category_data, key=lambda c: category_data[c]["amount"]) if category_data else "N/A"
 
+    chart_data = sorted(
+        [{"name": cat, "value": round(d["amount"], 2), "count": d["count"]}
+         for cat, d in category_data.items()],
+        key=lambda x: x["value"], reverse=True
+    )
+
+    monthly_trend = sorted(
+        [{"month": k, "total": round(v, 2)} for k, v in monthly.items()],
+        key=lambda x: x["month"]
+    )
+
     def receipt_top_cat(rid: int) -> str:
         cats = receipt_categories.get(rid, {})
         return max(cats, key=cats.get) if cats else "Others"
 
     return {
         "total_spent":    round(total_spent, 2),
-        "receipt_count":  len(receipts),
+        "receipt_count":  receipt_count,
         "top_category":   top_category,
-        "category_spend": sorted(
-            [{"name": c, "value": round(d["amount"], 2), "count": d["count"]}
-             for c, d in category_data.items()],
-            key=lambda x: x["value"], reverse=True
-        ),
-        "monthly_trend": sorted(
-            [{"month": k, "total": round(v, 2)} for k, v in monthly.items()],
-            key=lambda x: x["month"]
-        ),
+        "category_spend": chart_data,
+        "monthly_trend":  monthly_trend,
         "recent_receipts": [
-            {"id": r.id, "merchant": r.merchant, "date": r.date,
-             "total_amount": r.total_amount, "category": receipt_top_cat(r.id)}
-            for r in receipts
+            {
+                "id":           r.id,
+                "merchant":     r.merchant,
+                "date":         r.date,
+                "total_amount": r.total_amount,
+                "category":     receipt_top_cat(r.id),
+            } for r in receipts
         ]
     }
 
@@ -304,13 +369,21 @@ async def get_dashboard_data(db: Session = Depends(get_db)):
 @app.get("/api/receipts")
 async def get_receipts(db: Session = Depends(get_db)):
     receipts = db.query(models.Receipt).order_by(models.Receipt.upload_date.desc()).all()
-    return [
-        {"id": r.id, "merchant": r.merchant, "location": r.location,
-         "date": r.date, "total_amount": r.total_amount,
-         "items": [{"product_name": i.product_name, "category": i.category, "price": i.price}
-                   for i in db.query(models.Item).filter(models.Item.receipt_id == r.id).all()]}
-        for r in receipts
-    ]
+    result = []
+    for r in receipts:
+        items = db.query(models.Item).filter(models.Item.receipt_id == r.id).all()
+        result.append({
+            "id":           r.id,
+            "merchant":     r.merchant,
+            "location":     r.location,
+            "date":         r.date,
+            "total_amount": r.total_amount,
+            "items": [
+                {"product_name": i.product_name, "category": i.category, "price": i.price}
+                for i in items
+            ]
+        })
+    return result
 
 
 @app.delete("/api/receipts/{receipt_id}")
@@ -324,18 +397,20 @@ async def delete_receipt(receipt_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         logger.warning(f"Error deleting image: {e}")
     db.query(models.Item).filter(models.Item.receipt_id == receipt_id).delete()
-    db.delete(receipt); db.commit()
+    db.delete(receipt)
+    db.commit()
     return {"status": "success"}
 
 
 @app.post("/api/reset")
 async def reset_data(db: Session = Depends(get_db)):
-    for fn in os.listdir(UPLOAD_DIR):
-        fp = os.path.join(UPLOAD_DIR, fn)
+    for filename in os.listdir(UPLOAD_DIR):
+        fp = os.path.join(UPLOAD_DIR, filename)
         try:
-            if os.path.isfile(fp): os.unlink(fp)
+            if os.path.isfile(fp):
+                os.unlink(fp)
         except Exception as e:
-            logger.warning(f"Error deleting {fp}: {e}")
+            logger.warning(f"Error deleting file {fp}: {e}")
     db.query(models.Item).delete()
     db.query(models.Receipt).delete()
     db.commit()
@@ -343,15 +418,19 @@ async def reset_data(db: Session = Depends(get_db)):
 
 
 if __name__ == "__main__":
-    import uvicorn, subprocess
+    import uvicorn
+    import subprocess
 
     try:
         current_pid = str(os.getpid())
         pids = subprocess.check_output("lsof -ti :8888", shell=True).decode().split()
+        killed = False
         for p in pids:
             if p != current_pid:
                 subprocess.run(f"kill -9 {p}", shell=True)
-        time.sleep(0.3)
+                killed = True
+        if killed:
+            time.sleep(0.5)
     except Exception:
         pass
 

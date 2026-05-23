@@ -404,32 +404,6 @@ header {
 }
 
 .upload-loading p { margin: 0; }
-.upload-loading-sub {
-  font-size: 12px;
-  color: #adb5bd;
-  letter-spacing: 0.2px;
-}
-
-/* Retry countdown */
-.upload-zone.retrying { cursor: default; }
-.upload-retry {
-  display: flex; flex-direction: column; align-items: center; gap: 10px;
-}
-.retry-ring {
-  width: 72px; height: 72px; border-radius: 50%;
-  border: 3px solid #e8e8ed; border-top-color: #0071e3;
-  display: flex; align-items: center; justify-content: center;
-  animation: spin 1s linear infinite;
-}
-.retry-num {
-  font-size: 22px; font-weight: 700; color: #0071e3; line-height: 1;
-}
-.retry-label {
-  font-size: 14px; font-weight: 500; color: #1d1d1f; margin: 0;
-}
-.retry-hint {
-  font-size: 12px; color: #86868b; margin: 0;
-}
 
 /* Upload error block */
 .upload-err-block {
