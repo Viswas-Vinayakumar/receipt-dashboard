@@ -1,6 +1,8 @@
 import os
+import re
 import shutil
 import json
+import time
 from datetime import datetime
 from typing import List, Optional
 import logging
@@ -140,11 +142,57 @@ async def upload_receipt(file: UploadFile = File(...), db: Session = Depends(get
         """
 
         logger.info("Sending request to Gemini AI...")
-        response = model.generate_content(
-            [prompt, {"mime_type": mime_type, "data": image_data}],
-            generation_config={"response_mime_type": "application/json"}
-        )
-        
+        response = None
+        last_err = None
+        for attempt in range(3):  # up to 3 attempts
+            try:
+                response = model.generate_content(
+                    [prompt, {"mime_type": mime_type, "data": image_data}],
+                    generation_config={"response_mime_type": "application/json"}
+                )
+                last_err = None
+                break  # success
+            except Exception as exc:
+                last_err = exc
+                err_str = str(exc)
+                is_rate_limit = (
+                    "429" in err_str
+                    or "quota" in err_str.lower()
+                    or "ResourceExhausted" in type(exc).__name__
+                )
+                if is_rate_limit and attempt < 2:
+                    # Parse the suggested retry delay from the error message
+                    m = re.search(r'retry[_ ]in[_ ](\d+(?:\.\d+)?)', err_str, re.IGNORECASE)
+                    wait = float(m.group(1)) + 2 if m else 65.0
+                    # Don't retry if it's a daily quota (wait > 5 min means daily limit hit)
+                    if wait > 300:
+                        logger.warning(f"Gemini daily quota exceeded — not retrying. Wait: {wait:.0f}s")
+                        break
+                    logger.info(f"Rate limit hit (attempt {attempt+1}/3) — waiting {wait:.0f}s before retry...")
+                    time.sleep(wait)
+                    continue
+                break  # non-rate-limit error or final attempt
+
+        if last_err is not None:
+            err_str = str(last_err)
+            is_rate_limit = (
+                "429" in err_str
+                or "quota" in err_str.lower()
+                or "ResourceExhausted" in type(last_err).__name__
+            )
+            if is_rate_limit:
+                m = re.search(r'retry[_ ]in[_ ](\d+(?:\.\d+)?)', err_str, re.IGNORECASE)
+                wait_sec = int(float(m.group(1))) + 1 if m else 60
+                friendly = (
+                    f"Gemini rate limit reached. "
+                    f"The free tier allows 20 uploads/day. "
+                    f"Try again in {wait_sec}s."
+                    if wait_sec > 300
+                    else f"Gemini is busy — try again in {wait_sec}s."
+                )
+                raise HTTPException(status_code=429, detail=friendly)
+            raise HTTPException(status_code=500, detail=err_str)
+
         extracted_data = json.loads(response.text)
         logger.info(f"Gemini AI extracted data: {extracted_data['merchant']}")
         extraction = ReceiptExtraction(**extracted_data)
@@ -175,6 +223,8 @@ async def upload_receipt(file: UploadFile = File(...), db: Session = Depends(get
 
         return {"status": "success", "data": extraction}
 
+    except HTTPException:
+        raise  # pass through our own HTTP errors unchanged
     except Exception as e:
         logger.error(f"Error processing receipt: {e}")
         raise HTTPException(status_code=500, detail=str(e))

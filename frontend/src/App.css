@@ -127,6 +127,23 @@ header {
   padding: 2px 6px;
 }
 
+.rate-limit-banner {
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  border-radius: 12px;
+  padding: 12px 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+  color: #92400e;
+  font-size: 14px;
+  cursor: pointer;
+  animation: fadeInUp 0.25s ease;
+}
+.rate-limit-banner .rate-limit-icon { font-size: 18px; flex-shrink: 0; }
+.rate-limit-banner span:nth-child(2) { flex: 1; }
+
 /* ── Cards ────────────────────────────────────────────────────────────────── */
 .card {
   background: rgba(255, 255, 255, 0.82);

@@ -54,6 +54,7 @@ function App() {
   const [data, setData]                     = useState<DashboardData | null>(null)
   const [loading, setLoading]               = useState(false)
   const [error, setError]                   = useState<string | null>(null)
+  const [rateLimitWarn, setRateLimitWarn]   = useState<string | null>(null)
   const [toast, setToast]                   = useState<Toast | null>(null)
   const [showUpload, setShowUpload]         = useState(false)
   const [uploadStatus, setUploadStatus]     = useState('')
@@ -159,12 +160,27 @@ function App() {
   }
 
   // ── Upload ───────────────────────────────────────────────────────────────
+  // Parse backend error message from JSON or plain text
+  const parseErrDetail = async (res: Response): Promise<{ msg: string; isRateLimit: boolean; waitSec: number }> => {
+    const raw = await res.text().catch(() => res.statusText)
+    let msg = raw
+    try {
+      const parsed = JSON.parse(raw)
+      msg = parsed.detail ?? parsed.message ?? raw
+    } catch {}
+    const isRateLimit = res.status === 429
+    const m = msg.match(/(\d+)s\.?$/)
+    const waitSec = isRateLimit && m ? parseInt(m[1]) : 0
+    return { msg, isRateLimit, waitSec }
+  }
+
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
     if (!files.length) return
-    setLoading(true); setError(null)
+    setLoading(true); setError(null); setRateLimitWarn(null)
     let ok = 0
     const errs: string[] = []
+    const rateLimitMsgs: string[] = []
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
@@ -175,21 +191,31 @@ function App() {
           form.append('file', new Blob([buf], { type: file.type || 'image/jpeg' }), file.name)
           const res = await tauriFetch('http://127.0.0.1:8888/api/upload', { method: 'POST', body: form })
           if (!res.ok) {
-            const detail = await res.text().catch(() => res.statusText)
-            throw new Error(`${file.name}: ${res.status} — ${detail}`)
+            const { msg, isRateLimit } = await parseErrDetail(res)
+            if (isRateLimit) {
+              rateLimitMsgs.push(msg)
+            } else {
+              throw new Error(`${file.name}: ${msg}`)
+            }
+          } else {
+            ok++
           }
-          ok++
         } catch (err) {
           errs.push(err instanceof Error ? err.message : `${file.name}: upload failed`)
         }
       }
       await fetchData()
-      if (!errs.length) {
+      if (rateLimitMsgs.length) {
+        setRateLimitWarn(rateLimitMsgs[0])
+      }
+      if (!errs.length && !rateLimitMsgs.length) {
         setShowUpload(false)
         showToast(ok === 1 ? 'Receipt processed successfully' : `${ok} receipts processed`)
-      } else {
+      } else if (errs.length) {
         setError(errs.length === 1 ? errs[0] : `${errs.length} of ${files.length} failed — ${errs.join('; ')}`)
         if (ok > 0) showToast(`${ok} of ${files.length} receipts processed`)
+      } else if (ok > 0) {
+        showToast(`${ok} of ${files.length} receipts processed`)
       }
     } finally {
       setLoading(false); setUploadStatus('')
@@ -357,6 +383,15 @@ function App() {
           </button>
         </div>
       </header>
+
+      {/* ── Rate-limit warning banner ── */}
+      {rateLimitWarn && (
+        <div className="rate-limit-banner" onClick={() => setRateLimitWarn(null)}>
+          <span className="rate-limit-icon">⏱</span>
+          <span>{rateLimitWarn}</span>
+          <span className="error-close">✕</span>
+        </div>
+      )}
 
       {/* ── Error banner ── */}
       {error && (
