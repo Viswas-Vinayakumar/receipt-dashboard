@@ -26,10 +26,32 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Hardcoded API key for stability in sidecar mode
-GEMINI_API_KEY = "AIzaSyCX3GP_zGQpkI-eB4YbxKKppiutuVR3NFs"
-
 logger.info("Initializing Backend...")
+
+# ── API key: read from config.json (gitignored), then env var ─────────────
+CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
+
+def load_api_key() -> str:
+    # 1. Try config.json in app_data (preferred — never committed to git)
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE) as f:
+                cfg = json.load(f)
+            key = cfg.get("gemini_api_key", "").strip()
+            if key:
+                logger.info("Loaded Gemini API key from config.json")
+                return key
+        except Exception as e:
+            logger.warning(f"Could not read config.json: {e}")
+    # 2. Fall back to environment variable
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if key:
+        logger.info("Loaded Gemini API key from environment variable")
+        return key
+    logger.error("No Gemini API key found. Create ~/receipt-dashboard/app_data/config.json with {\"gemini_api_key\": \"YOUR_KEY\"}")
+    return ""
+
+GEMINI_API_KEY = load_api_key()
 
 # Initialize Database
 try:
@@ -40,7 +62,7 @@ except Exception as e:
 
 # Initialize Gemini
 genai.configure(api_key=GEMINI_API_KEY)
-# Switch to gemini-2.5-flash for 2026 compatibility
+# gemini-2.5-flash — current stable model
 model = genai.GenerativeModel("gemini-2.5-flash")
 
 app = FastAPI()
