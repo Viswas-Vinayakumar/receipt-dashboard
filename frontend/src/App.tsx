@@ -62,13 +62,16 @@ const formatMonth = (m: string) => {
 const emptyManualItem = (): ManualItem => ({ product_name: '', category: 'Groceries', price: '' })
 const todayISO = () => new Date().toISOString().split('T')[0]
 
-// ── Logo (Option B — Accent) ───────────────────────────────────────────────
+// ── Logo — V5 refined mark ────────────────────────────────────────────────
 const LogoIcon = ({ size = 40 }: { size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <ellipse cx="40" cy="41" rx="22" ry="28" stroke="#1d1d1f" strokeWidth="2.5" strokeLinecap="round"/>
-    <line x1="29" y1="15" x2="29" y2="67" stroke="#d2d2d7" strokeWidth="2" strokeLinecap="round"/>
-    <line x1="40" y1="13" x2="40" y2="69" stroke="#0071e3" strokeWidth="2.5" strokeLinecap="round"/>
-    <line x1="51" y1="15" x2="51" y2="67" stroke="#d2d2d7" strokeWidth="2" strokeLinecap="round"/>
+  <svg width={size} height={size} viewBox="0 0 84 84" fill="none" xmlns="http://www.w3.org/2000/svg">
+    {/* Side bars — soft blue-gray, slightly recessed */}
+    <line x1="29.5" y1="21"   x2="29.5" y2="63"   stroke="#c0cce0" strokeWidth="2.2" strokeLinecap="round"/>
+    <line x1="54.5" y1="21"   x2="54.5" y2="63"   stroke="#c0cce0" strokeWidth="2.2" strokeLinecap="round"/>
+    {/* Oval — deep navy */}
+    <ellipse cx="42" cy="42" rx="17.5" ry="22.5" stroke="#0e1b42" strokeWidth="3" strokeLinecap="round"/>
+    {/* Center bar — brand blue, crosses oval */}
+    <line x1="42" y1="17.5" x2="42" y2="66.5" stroke="#0071e3" strokeWidth="3" strokeLinecap="round"/>
   </svg>
 )
 
