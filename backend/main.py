@@ -3,15 +3,16 @@ import re
 import shutil
 import json
 import time
+import base64
 from collections import defaultdict
 from datetime import datetime
 from typing import List, Optional
 import logging
 
+import requests as http_requests
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-import google.generativeai as genai
 from pydantic import BaseModel
 
 import models
@@ -33,25 +34,31 @@ logger.info("Initializing Backend...")
 # ── API key ────────────────────────────────────────────────────────────────
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODEL   = "llama-3.2-11b-vision-preview"
+
 def load_api_key() -> str:
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE) as f:
                 cfg = json.load(f)
-            key = cfg.get("gemini_api_key", "").strip()
+            key = cfg.get("groq_api_key", "").strip()
             if key:
-                logger.info("Loaded Gemini API key from config.json")
+                logger.info("Loaded Groq API key from config.json")
                 return key
         except Exception as e:
             logger.warning(f"Could not read config.json: {e}")
-    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    key = os.environ.get("GROQ_API_KEY", "").strip()
     if key:
-        logger.info("Loaded Gemini API key from environment variable")
+        logger.info("Loaded Groq API key from environment variable")
         return key
-    logger.error("No Gemini API key found. Create ~/receipt-dashboard/app_data/config.json with {\"gemini_api_key\": \"YOUR_KEY\"}")
+    logger.error(
+        "No Groq API key found. "
+        'Create ~/receipt-dashboard/app_data/config.json with {"groq_api_key": "YOUR_KEY"}'
+    )
     return ""
 
-GEMINI_API_KEY = load_api_key()
+GROQ_API_KEY = load_api_key()
 
 # ── Database init ──────────────────────────────────────────────────────────
 try:
@@ -59,11 +66,6 @@ try:
     logger.info("Database initialized successfully")
 except Exception as e:
     logger.error(f"Database initialization failed: {e}")
-
-# ── Gemini model ───────────────────────────────────────────────────────────
-genai.configure(api_key=GEMINI_API_KEY)
-# gemini-2.0-flash: 3-4× faster than 2.5-flash, free tier = 1500 requests/day
-model = genai.GenerativeModel("gemini-2.0-flash")
 
 app = FastAPI()
 
@@ -106,22 +108,145 @@ class EditReceiptIn(BaseModel):
     total_amount: float
     items: List[ReceiptItem] = []
 
-# ── Helpers ────────────────────────────────────────────────────────────────
-def _parse_retry_wait(err_str: str, default: float = 65.0) -> float:
-    m = re.search(r'retry[_ ]in[_ ](\d+(?:\.\d+)?)', err_str, re.IGNORECASE)
-    return float(m.group(1)) + 2 if m else default
+# ── Groq vision helper ─────────────────────────────────────────────────────
+PROMPT = """Analyze this image and determine if it is a receipt (retail, grocery, restaurant, pharmacy, transport, etc.).
 
-def _is_rate_limit(exc: Exception) -> bool:
-    err_str = str(exc)
-    return (
-        "429" in err_str
-        or "quota" in err_str.lower()
-        or "ResourceExhausted" in type(exc).__name__
+If it is NOT a receipt (e.g. a selfie, landscape, screenshot, document, or unrelated photo):
+Return ONLY valid JSON: {"is_receipt": false}
+
+If it IS a receipt, extract all fields accurately.
+
+Rules:
+1. merchant: The COMPLETE store name as printed in the header, including branch or city suffix (e.g. "Kaufland Berlin-Heinersdorf", NOT just "Kaufland").
+2. location: Full street address of the store.
+3. date: Convert any date format to strict ISO 8601 — YYYY-MM-DD only (e.g. "18.05.2026" → "2026-05-18").
+4. total_amount: The final amount paid (Summe / Gesamtbetrag / Total) as a decimal number. Do NOT include tax breakdown lines.
+5. items: Only individual product line items with their listed price. Exclude payment info, TSE data, tax rows, and subtotals.
+
+The receipt may be in German or English. Translate product names to English.
+Each item's category must be exactly one of: Groceries, Bakery, Beverages, Electronics, Dining, Transport, Health, Deposit, Others.
+
+Return ONLY a valid JSON object — no markdown, no explanation, no code fences:
+{
+  "is_receipt": true,
+  "merchant": "string",
+  "location": "string",
+  "date": "YYYY-MM-DD",
+  "total_amount": number,
+  "items": [
+    {"product_name": "string", "category": "string", "price": number}
+  ]
+}"""
+
+
+def _extract_json(text: str) -> str:
+    """Strip markdown code fences if the model added them anyway."""
+    text = text.strip()
+    # Remove ```json ... ``` or ``` ... ```
+    m = re.search(r'```(?:json)?\s*([\s\S]*?)```', text)
+    if m:
+        return m.group(1).strip()
+    return text
+
+
+def call_groq_vision(image_data: bytes, mime_type: str) -> dict:
+    """
+    Call Groq's vision endpoint with the image encoded as base64.
+    Returns parsed JSON dict from the model.
+    Raises HTTPException on API errors.
+    """
+    b64 = base64.b64encode(image_data).decode("utf-8")
+    data_url = f"data:{mime_type};base64,{b64}"
+
+    payload = {
+        "model": GROQ_MODEL,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": data_url}
+                    },
+                    {
+                        "type": "text",
+                        "text": PROMPT
+                    }
+                ]
+            }
+        ],
+        "max_tokens": 2048,
+        "temperature": 0
+    }
+
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    last_err = None
+    for attempt in range(3):
+        try:
+            resp = http_requests.post(
+                GROQ_API_URL, json=payload, headers=headers, timeout=60
+            )
+
+            if resp.status_code == 200:
+                content = resp.json()["choices"][0]["message"]["content"]
+                raw_text = _extract_json(content)
+                return json.loads(raw_text)
+
+            if resp.status_code == 429:
+                # Parse Retry-After header or body
+                retry_after = resp.headers.get("retry-after", "")
+                try:
+                    wait = float(retry_after) + 2 if retry_after else 65.0
+                except ValueError:
+                    wait = 65.0
+                logger.warning(f"Groq rate limit — waiting {wait:.0f}s (attempt {attempt+1}/3)...")
+                if wait > 300:
+                    raise HTTPException(
+                        status_code=429,
+                        detail="Daily quota reached. The free tier allows 14,400 req/day. Try again later or enter receipt manually."
+                    )
+                if attempt < 2:
+                    time.sleep(wait)
+                    last_err = f"429: {resp.text}"
+                    continue
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Groq is busy — try again in {int(wait)}s, or enter receipt manually."
+                )
+
+            if resp.status_code in (400, 401, 403):
+                logger.error(f"Groq auth/key error {resp.status_code}: {resp.text}")
+                raise HTTPException(
+                    status_code=401,
+                    detail="Groq API key is invalid or revoked. Update app_data/config.json with a valid key."
+                )
+
+            # Any other non-200
+            logger.error(f"Groq error {resp.status_code}: {resp.text}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"AI processing failed (HTTP {resp.status_code}): {resp.text[:200]}"
+            )
+
+        except HTTPException:
+            raise
+        except Exception as exc:
+            last_err = exc
+            logger.warning(f"Groq request failed (attempt {attempt+1}/3): {exc}")
+            if attempt < 2:
+                time.sleep(5)
+                continue
+            break
+
+    raise HTTPException(
+        status_code=500,
+        detail=f"AI processing failed after 3 attempts: {last_err}"
     )
 
-def _is_invalid_key(exc: Exception) -> bool:
-    err_str = str(exc)
-    return "400" in err_str or "401" in err_str or "403" in err_str or "API_KEY_INVALID" in err_str
 
 # ── Routes ─────────────────────────────────────────────────────────────────
 @app.get("/api/health")
@@ -133,10 +258,10 @@ async def health_check():
 async def upload_receipt(file: UploadFile = File(...), db: Session = Depends(get_db)):
     logger.info(f"Received upload request: {file.filename}")
 
-    if not GEMINI_API_KEY:
+    if not GROQ_API_KEY:
         raise HTTPException(
             status_code=503,
-            detail="No Gemini API key configured. Add your key to app_data/config.json."
+            detail="No Groq API key configured. Add your key to app_data/config.json."
         )
 
     file_path = os.path.join(UPLOAD_DIR, f"{datetime.now().timestamp()}_{file.filename}")
@@ -150,72 +275,8 @@ async def upload_receipt(file: UploadFile = File(...), db: Session = Depends(get
         with open(file_path, "rb") as f:
             image_data = f.read()
 
-        prompt = """
-        Analyze this image and determine if it is a receipt (retail, grocery, restaurant, pharmacy, transport, etc.).
-
-        If it is NOT a receipt (e.g. a selfie, landscape, screenshot, document, or unrelated photo):
-        Return ONLY: {"is_receipt": false}
-
-        If it IS a receipt, extract all fields accurately:
-
-        Rules:
-        1. merchant: The COMPLETE store name as printed in the header, including branch or city suffix (e.g. "Kaufland Berlin-Heinersdorf", NOT just "Kaufland").
-        2. location: Full street address of the store.
-        3. date: Convert any date format to strict ISO 8601 — YYYY-MM-DD only (e.g. "18.05.2026" → "2026-05-18").
-        4. total_amount: The final amount paid (Summe / Gesamtbetrag / Total) as a decimal number. Do NOT include tax breakdown lines.
-        5. items: Only individual product line items with their listed price. Exclude payment info, TSE data, tax rows, and subtotals.
-
-        The receipt may be in German or English. Translate product names to English.
-        Each item's category must be exactly one of: Groceries, Bakery, Beverages, Electronics, Dining, Transport, Health, Deposit, Others.
-
-        Return ONLY a valid JSON object — no markdown, no explanation:
-        {
-          "is_receipt": true,
-          "merchant": "string",
-          "location": "string",
-          "date": "YYYY-MM-DD",
-          "total_amount": number,
-          "items": [
-            {"product_name": "string", "category": "string", "price": number}
-          ]
-        }
-        """
-
-        logger.info("Sending request to Gemini AI...")
-        response = None
-        last_err = None
-
-        for attempt in range(3):
-            try:
-                response = model.generate_content(
-                    [prompt, {"mime_type": mime_type, "data": image_data}],
-                    generation_config={"response_mime_type": "application/json"}
-                )
-                last_err = None
-                break
-            except Exception as exc:
-                last_err = exc
-                if _is_rate_limit(exc) and attempt < 2:
-                    wait = _parse_retry_wait(str(exc))
-                    if wait > 300:
-                        logger.warning(f"Gemini daily quota exceeded. Wait: {wait:.0f}s")
-                        break
-                    logger.info(f"Rate limit — waiting {wait:.0f}s (attempt {attempt+1}/3)...")
-                    time.sleep(wait)
-                    continue
-                break
-
-        if last_err is not None:
-            if _is_rate_limit(last_err):
-                wait_sec = int(_parse_retry_wait(str(last_err)))
-                if wait_sec > 300:
-                    raise HTTPException(status_code=429, detail=f"Daily quota reached. The free tier allows 20 scans/day. Try again tomorrow or enter receipt manually.")
-                raise HTTPException(status_code=429, detail=f"Gemini is busy — try again in {wait_sec}s, or enter receipt manually.")
-            if _is_invalid_key(last_err):
-                raise HTTPException(status_code=401, detail="Gemini API key is invalid or revoked. Update app_data/config.json with a valid key.")
-            raise HTTPException(status_code=500, detail=f"AI processing failed: {str(last_err)}")
-
-        raw = json.loads(response.text)
+        logger.info("Sending request to Groq AI (llama-3.2-11b-vision)...")
+        raw = call_groq_vision(image_data, mime_type)
 
         # Not a receipt
         if not raw.get("is_receipt", True):
@@ -287,9 +348,9 @@ async def edit_receipt(receipt_id: int, data: EditReceiptIn, db: Session = Depen
     receipt = db.query(models.Receipt).filter(models.Receipt.id == receipt_id).first()
     if not receipt:
         raise HTTPException(status_code=404, detail="Receipt not found")
-    receipt.merchant    = data.merchant
-    receipt.location    = data.location
-    receipt.date        = data.date
+    receipt.merchant     = data.merchant
+    receipt.location     = data.location
+    receipt.date         = data.date
     receipt.total_amount = data.total_amount
     db.query(models.Item).filter(models.Item.receipt_id == receipt_id).delete()
     for item in data.items:
@@ -310,12 +371,12 @@ async def get_dashboard_data(db: Session = Depends(get_db)):
     receipts = db.query(models.Receipt).order_by(models.Receipt.upload_date.desc()).all()
     items    = db.query(models.Item).all()
 
-    total_spent    = sum(r.total_amount for r in receipts)
-    receipt_count  = len(receipts)
+    total_spent   = sum(r.total_amount for r in receipts)
+    receipt_count = len(receipts)
 
-    category_data: dict = {}
+    category_data: dict      = {}
     receipt_categories: dict = {}
-    monthly: dict = defaultdict(float)
+    monthly: dict            = defaultdict(float)
 
     for item in items:
         if item.category not in category_data:
@@ -331,7 +392,10 @@ async def get_dashboard_data(db: Session = Depends(get_db)):
         if r.date and len(r.date) >= 7:
             monthly[r.date[:7]] += r.total_amount
 
-    top_category = max(category_data, key=lambda c: category_data[c]["amount"]) if category_data else "N/A"
+    top_category = (
+        max(category_data, key=lambda c: category_data[c]["amount"])
+        if category_data else "N/A"
+    )
 
     chart_data = sorted(
         [{"name": cat, "value": round(d["amount"], 2), "count": d["count"]}

@@ -231,7 +231,7 @@ function App() {
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
-        setUploadStatus(files.length > 1 ? `Analyzing ${i + 1} of ${files.length}…` : 'Gemini AI is analyzing your receipt…')
+        setUploadStatus(files.length > 1 ? `Analyzing ${i + 1} of ${files.length}…` : 'AI is analyzing your receipt…')
         try {
           const buf  = await file.arrayBuffer()
           const form = new FormData()
@@ -666,7 +666,7 @@ function App() {
                 {loading ? (
                   <div className="upload-loading">
                     <div className="loading-spinner" />
-                    <p>{uploadStatus || 'Gemini AI is reading your receipt…'}</p>
+                    <p>{uploadStatus || 'AI is reading your receipt…'}</p>
                   </div>
                 ) : (
                   <>
