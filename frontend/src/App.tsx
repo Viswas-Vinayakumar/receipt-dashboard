@@ -80,6 +80,7 @@ function App() {
   // ── Core state ─────────────────────────────────────────────────────────
   const [data, setData]                       = useState<DashboardData | null>(null)
   const [loading, setLoading]                 = useState(false)
+  const [loadingElapsed, setLoadingElapsed]   = useState(0)
   const [error, setError]                     = useState<string | null>(null)
   const [rateLimitWarn, setRateLimitWarn]     = useState<string | null>(null)
   const [toast, setToast]                     = useState<Toast | null>(null)
@@ -223,15 +224,20 @@ function App() {
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
     if (!files.length) return
-    setLoading(true); setError(null); setRateLimitWarn(null); setUploadErr(null)
+    setLoading(true); setLoadingElapsed(0); setError(null); setRateLimitWarn(null); setUploadErr(null)
+
+    // Elapsed-time ticker so the user knows the AI is still working
+    const ticker = setInterval(() => setLoadingElapsed(s => s + 1), 1000)
+
     let ok = 0
     const errs: string[] = []
     const rateLimitMsgs: string[] = []
+    let hasUploadErr = false   // local flag — avoids stale React-closure bug
 
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
-        setUploadStatus(files.length > 1 ? `Analyzing ${i + 1} of ${files.length}…` : 'AI is analyzing your receipt…')
+        setUploadStatus(files.length > 1 ? `Analyzing ${i + 1} of ${files.length}…` : '')
         try {
           const buf  = await file.arrayBuffer()
           const form = new FormData()
@@ -240,16 +246,17 @@ function App() {
           if (!res.ok) {
             const { msg, status } = await parseErrDetail(res)
             if (status === 400 && msg === 'not_a_receipt') {
+              hasUploadErr = true
               setUploadErr({
                 msg: "This image doesn't look like a receipt. Try a clearer photo, or enter the details manually.",
                 isNotReceipt: true
               })
             } else if (status === 429) {
               rateLimitMsgs.push(msg)
-            } else if (status === 401) {
+            } else if (status === 401 || status === 503) {
+              // Auth / config errors — show banner AND keep panel open
               setError(msg)
-            } else if (status === 503) {
-              setError(msg)
+              errs.push(msg)
             } else {
               throw new Error(msg)
             }
@@ -265,17 +272,19 @@ function App() {
 
       if (rateLimitMsgs.length) setRateLimitWarn(rateLimitMsgs[0])
 
-      if (!errs.length && !rateLimitMsgs.length && !uploadErr) {
+      // Only close the panel when at least one receipt was actually saved
+      if (ok > 0 && !errs.length && !rateLimitMsgs.length && !hasUploadErr) {
         setShowUpload(false)
         showToast(ok === 1 ? 'Receipt scanned successfully' : `${ok} receipts scanned`)
-      } else if (errs.length) {
-        setError(errs.length === 1 ? errs[0] : `${errs.length} of ${files.length} failed — ${errs.join('; ')}`)
+      } else if (errs.length && !rateLimitMsgs.length) {
+        if (!error) setError(errs.length === 1 ? errs[0] : `${errs.length} of ${files.length} failed — ${errs.join('; ')}`)
         if (ok > 0) showToast(`${ok} of ${files.length} receipts processed`)
       } else if (ok > 0) {
         showToast(`${ok} of ${files.length} receipts processed`)
       }
     } finally {
-      setLoading(false); setUploadStatus('')
+      clearInterval(ticker)
+      setLoading(false); setLoadingElapsed(0); setUploadStatus('')
       if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
@@ -666,7 +675,10 @@ function App() {
                 {loading ? (
                   <div className="upload-loading">
                     <div className="loading-spinner" />
-                    <p>{uploadStatus || 'AI is reading your receipt…'}</p>
+                    <p>{uploadStatus || (loadingElapsed > 12 ? 'AI is busy — retrying automatically…' : 'AI is reading your receipt…')}</p>
+                    {loadingElapsed > 5 && (
+                      <p className="upload-loading-sub">{loadingElapsed}s — please wait, do not close</p>
+                    )}
                   </div>
                 ) : (
                   <>
