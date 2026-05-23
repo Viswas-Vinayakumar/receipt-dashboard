@@ -10,6 +10,7 @@ from typing import List, Optional
 import logging
 
 import requests as http_requests
+import google.generativeai as genai
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -34,31 +35,31 @@ logger.info("Initializing Backend...")
 # ── API key ────────────────────────────────────────────────────────────────
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 
-XAI_API_URL = "https://api.x.ai/v1/chat/completions"
-XAI_MODEL   = "grok-2-vision-1212"
-
 def load_api_key() -> str:
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE) as f:
                 cfg = json.load(f)
-            key = cfg.get("xai_api_key", "").strip()
+            key = cfg.get("gemini_api_key", "").strip()
             if key:
-                logger.info("Loaded xAI API key from config.json")
+                logger.info("Loaded Gemini API key from config.json")
                 return key
         except Exception as e:
             logger.warning(f"Could not read config.json: {e}")
-    key = os.environ.get("XAI_API_KEY", "").strip()
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
     if key:
-        logger.info("Loaded xAI API key from environment variable")
+        logger.info("Loaded Gemini API key from environment variable")
         return key
     logger.error(
-        "No xAI API key found. "
-        'Create ~/receipt-dashboard/app_data/config.json with {"xai_api_key": "YOUR_KEY"}'
+        "No Gemini API key found. "
+        'Create ~/receipt-dashboard/app_data/config.json with {"gemini_api_key": "YOUR_KEY"}'
     )
     return ""
 
-XAI_API_KEY = load_api_key()
+GEMINI_API_KEY = load_api_key()
+genai.configure(api_key=GEMINI_API_KEY)
+# gemini-2.0-flash: fast + free tier = 1,500 req/day
+gemini_model = genai.GenerativeModel("gemini-2.0-flash")
 
 # ── Database init ──────────────────────────────────────────────────────────
 try:
@@ -149,102 +150,21 @@ def _extract_json(text: str) -> str:
     return text
 
 
-def call_xai_vision(image_data: bytes, mime_type: str) -> dict:
-    """
-    Call xAI Grok vision endpoint with the image encoded as base64.
-    Returns parsed JSON dict from the model.
-    Raises HTTPException on API errors.
-    """
-    b64 = base64.b64encode(image_data).decode("utf-8")
-    data_url = f"data:{mime_type};base64,{b64}"
+def _parse_retry_wait(err_str: str, default: float = 65.0) -> float:
+    m = re.search(r'retry[_ ]in[_ ](\d+(?:\.\d+)?)', err_str, re.IGNORECASE)
+    return float(m.group(1)) + 2 if m else default
 
-    payload = {
-        "model": XAI_MODEL,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": data_url, "detail": "high"}
-                    },
-                    {
-                        "type": "text",
-                        "text": PROMPT
-                    }
-                ]
-            }
-        ],
-        "max_tokens": 2048,
-        "temperature": 0
-    }
-
-    headers = {
-        "Authorization": f"Bearer {XAI_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    last_err = None
-    for attempt in range(3):
-        try:
-            resp = http_requests.post(
-                XAI_API_URL, json=payload, headers=headers, timeout=60
-            )
-
-            if resp.status_code == 200:
-                content = resp.json()["choices"][0]["message"]["content"]
-                raw_text = _extract_json(content)
-                return json.loads(raw_text)
-
-            if resp.status_code == 429:
-                retry_after = resp.headers.get("retry-after", "")
-                try:
-                    wait = float(retry_after) + 2 if retry_after else 65.0
-                except ValueError:
-                    wait = 65.0
-                logger.warning(f"xAI rate limit — waiting {wait:.0f}s (attempt {attempt+1}/3)...")
-                if wait > 300:
-                    raise HTTPException(
-                        status_code=429,
-                        detail="Rate limit reached. Try again later or enter receipt manually."
-                    )
-                if attempt < 2:
-                    time.sleep(wait)
-                    last_err = f"429: {resp.text}"
-                    continue
-                raise HTTPException(
-                    status_code=429,
-                    detail=f"AI is busy — try again in {int(wait)}s, or enter receipt manually."
-                )
-
-            if resp.status_code in (400, 401, 403):
-                logger.error(f"xAI auth/key error {resp.status_code}: {resp.text}")
-                raise HTTPException(
-                    status_code=401,
-                    detail="xAI API key is invalid or revoked. Update app_data/config.json with a valid key."
-                )
-
-            # Any other non-200
-            logger.error(f"xAI error {resp.status_code}: {resp.text}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"AI processing failed (HTTP {resp.status_code}): {resp.text[:200]}"
-            )
-
-        except HTTPException:
-            raise
-        except Exception as exc:
-            last_err = exc
-            logger.warning(f"xAI request failed (attempt {attempt+1}/3): {exc}")
-            if attempt < 2:
-                time.sleep(5)
-                continue
-            break
-
-    raise HTTPException(
-        status_code=500,
-        detail=f"AI processing failed after 3 attempts: {last_err}"
+def _is_rate_limit(exc: Exception) -> bool:
+    err_str = str(exc)
+    return (
+        "429" in err_str
+        or "quota" in err_str.lower()
+        or "ResourceExhausted" in type(exc).__name__
     )
+
+def _is_invalid_key(exc: Exception) -> bool:
+    err_str = str(exc)
+    return "400" in err_str or "401" in err_str or "403" in err_str or "API_KEY_INVALID" in err_str
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────
@@ -257,10 +177,10 @@ async def health_check():
 async def upload_receipt(file: UploadFile = File(...), db: Session = Depends(get_db)):
     logger.info(f"Received upload request: {file.filename}")
 
-    if not XAI_API_KEY:
+    if not GEMINI_API_KEY:
         raise HTTPException(
             status_code=503,
-            detail="No xAI API key configured. Add your key to app_data/config.json."
+            detail="No Gemini API key configured. Add your key to app_data/config.json."
         )
 
     file_path = os.path.join(UPLOAD_DIR, f"{datetime.now().timestamp()}_{file.filename}")
@@ -274,8 +194,41 @@ async def upload_receipt(file: UploadFile = File(...), db: Session = Depends(get
         with open(file_path, "rb") as f:
             image_data = f.read()
 
-        logger.info("Sending request to xAI Grok vision...")
-        raw = call_xai_vision(image_data, mime_type)
+        logger.info("Sending request to Gemini AI...")
+        response = None
+        last_err = None
+
+        for attempt in range(3):
+            try:
+                response = gemini_model.generate_content(
+                    [PROMPT, {"mime_type": mime_type, "data": image_data}],
+                    generation_config={"response_mime_type": "application/json"}
+                )
+                last_err = None
+                break
+            except Exception as exc:
+                last_err = exc
+                if _is_rate_limit(exc) and attempt < 2:
+                    wait = _parse_retry_wait(str(exc))
+                    if wait > 300:
+                        logger.warning(f"Gemini daily quota exceeded. Wait: {wait:.0f}s")
+                        break
+                    logger.info(f"Rate limit — waiting {wait:.0f}s (attempt {attempt+1}/3)...")
+                    time.sleep(wait)
+                    continue
+                break
+
+        if last_err is not None:
+            if _is_rate_limit(last_err):
+                wait_sec = int(_parse_retry_wait(str(last_err)))
+                if wait_sec > 300:
+                    raise HTTPException(status_code=429, detail="Daily quota reached. The free tier allows 1,500 scans/day. Try again tomorrow or enter receipt manually.")
+                raise HTTPException(status_code=429, detail=f"Gemini is busy — try again in {wait_sec}s, or enter receipt manually.")
+            if _is_invalid_key(last_err):
+                raise HTTPException(status_code=401, detail="Gemini API key is invalid or revoked. Update app_data/config.json with a valid key.")
+            raise HTTPException(status_code=500, detail=f"AI processing failed: {str(last_err)}")
+
+        raw = json.loads(response.text)
 
         # Not a receipt
         if not raw.get("is_receipt", True):
