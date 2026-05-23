@@ -11,8 +11,8 @@ interface DashboardData {
   total_spent: number;
   receipt_count: number;
   top_category: string;
-  category_spend: { name: string; value: number }[];
-  recent_receipts: { id: number; merchant: string; date: string; total_amount: number }[];
+  category_spend: { name: string; value: number; count: number }[];
+  recent_receipts: { id: number; merchant: string; date: string; total_amount: number; category: string }[];
 }
 
 interface Toast {
@@ -36,13 +36,14 @@ const CATEGORY_COLORS: Record<string, string> = {
 const categoryColor = (name: string) => CATEGORY_COLORS[name] ?? '#94a3b8'
 
 function App() {
-  const [data, setData]               = useState<DashboardData | null>(null)
-  const [loading, setLoading]         = useState(false)
-  const [error, setError]             = useState<string | null>(null)
-  const [toast, setToast]             = useState<Toast | null>(null)
-  const [showUpload, setShowUpload]   = useState(false)
-  const [uploadStatus, setUploadStatus] = useState('')
+  const [data, setData]                   = useState<DashboardData | null>(null)
+  const [loading, setLoading]             = useState(false)
+  const [error, setError]                 = useState<string | null>(null)
+  const [toast, setToast]                 = useState<Toast | null>(null)
+  const [showUpload, setShowUpload]       = useState(false)
+  const [uploadStatus, setUploadStatus]   = useState('')
   const [connectionStatus, setConnectionStatus] = useState('Initializing...')
+  const [showResetModal, setShowResetModal] = useState(false)
   const fileInputRef   = useRef<HTMLInputElement>(null)
   const undoTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -200,8 +201,8 @@ function App() {
   }
 
   // ── Reset ──────────────────────────────────────────────────────────────────
-  const handleReset = async () => {
-    if (!window.confirm('Clear all receipts? This cannot be undone.')) return
+  const doReset = async () => {
+    setShowResetModal(false)
     try {
       const res = await tauriFetch('http://127.0.0.1:8888/api/reset', { method: 'POST' })
       if (!res.ok) throw new Error()
@@ -219,19 +220,32 @@ function App() {
     return s
   }
 
-  const isActive  = connectionStatus === 'Active'
-  const isError   = connectionStatus.includes('Failed') || connectionStatus.includes('Blocked') || connectionStatus.includes('Stopped')
-  const dotClass  = isActive ? 'dot-active' : isError ? 'dot-error' : 'dot-warn'
+  const isActive    = connectionStatus === 'Active'
+  const isError     = connectionStatus.includes('Failed') || connectionStatus.includes('Blocked') || connectionStatus.includes('Stopped')
+  const dotClass    = isActive ? 'dot-active' : isError ? 'dot-error' : 'dot-warn'
   const statusColor = isActive ? '#10b981' : isError ? '#ef4444' : '#f59e0b'
+
+  // Chart total (sum of item prices, may differ slightly from receipt totals)
+  const chartTotal = data?.category_spend.reduce((s, e) => s + e.value, 0) ?? 0
 
   // ── Chart tooltip ──────────────────────────────────────────────────────────
   const ChartTooltip = ({ active, payload }: any) => {
     if (!active || !payload?.length) return null
     const d = payload[0].payload
+    const pct = chartTotal > 0 ? Math.round((d.value / chartTotal) * 100) : 0
     return (
       <div className="chart-tip">
-        <span style={{ color: categoryColor(d.name) }}>■</span>
-        {d.name} <strong>€{d.value.toFixed(2)}</strong>
+        <span className="chart-tip-dot" style={{ background: categoryColor(d.name) }} />
+        <div>
+          <div className="chart-tip-name">{d.name}</div>
+          <div className="chart-tip-meta">
+            <strong>€{d.value.toFixed(2)}</strong>
+            <span className="chart-tip-sep">·</span>
+            <span>{pct}% of total</span>
+            <span className="chart-tip-sep">·</span>
+            <span>{d.count} item{d.count !== 1 ? 's' : ''}</span>
+          </div>
+        </div>
       </div>
     )
   }
@@ -247,7 +261,7 @@ function App() {
           <p className="subtitle">Your spending at a glance</p>
         </div>
         <div className="action-bar">
-          <button className="btn btn-secondary" onClick={handleReset}>Reset</button>
+          <button className="btn btn-secondary" onClick={() => setShowResetModal(true)}>Reset</button>
           <button className="btn btn-primary" onClick={() => setShowUpload(s => !s)}>
             {showUpload ? 'Cancel' : '+ New Receipt'}
           </button>
@@ -267,10 +281,16 @@ function App() {
         <div className="card stat-card" style={{ animationDelay: '0.05s' }}>
           <h3>Total Spent</h3>
           <div className="stat-value">€{data?.total_spent.toFixed(2) ?? '0.00'}</div>
+          {data && data.receipt_count > 0 && (
+            <div className="stat-sub">avg €{(data.total_spent / data.receipt_count).toFixed(2)} / receipt</div>
+          )}
         </div>
         <div className="card stat-card" style={{ animationDelay: '0.1s' }}>
           <h3>Receipts</h3>
           <div className="stat-value">{data?.receipt_count ?? 0}</div>
+          {data && data.category_spend.length > 0 && (
+            <div className="stat-sub">{data.category_spend.length} categories</div>
+          )}
         </div>
         <div className="card stat-card" style={{ animationDelay: '0.15s' }}>
           <h3>Top Category</h3>
@@ -280,6 +300,11 @@ function App() {
             )}
             {data?.top_category || 'N/A'}
           </div>
+          {data && data.category_spend.length > 0 && data.top_category !== 'N/A' && (() => {
+            const top = data.category_spend.find(c => c.name === data.top_category)
+            const pct = chartTotal > 0 && top ? Math.round((top.value / chartTotal) * 100) : 0
+            return <div className="stat-sub">{pct}% of spending</div>
+          })()}
         </div>
         <div className="card stat-card" style={{ animationDelay: '0.2s' }}>
           <h3>Engine</h3>
@@ -293,12 +318,15 @@ function App() {
       {/* ── Category chart ── */}
       {data && data.category_spend.length > 0 && (
         <section className="card chart-card" style={{ animationDelay: '0.25s' }}>
-          <h3>Spending by Category</h3>
-          <ResponsiveContainer width="100%" height={Math.max(100, data.category_spend.length * 52)}>
+          <div className="chart-header">
+            <h3>Spending by Category</h3>
+            <span className="chart-total">{data.category_spend.length} categories · €{chartTotal.toFixed(2)} total</span>
+          </div>
+          <ResponsiveContainer width="100%" height={Math.max(100, data.category_spend.length * 56)}>
             <BarChart
               data={data.category_spend}
               layout="vertical"
-              margin={{ top: 4, right: 70, left: 0, bottom: 4 }}
+              margin={{ top: 4, right: 110, left: 0, bottom: 4 }}
             >
               <XAxis type="number" hide domain={[0, 'dataMax']} />
               <YAxis
@@ -317,7 +345,10 @@ function App() {
                 <LabelList
                   dataKey="value"
                   position="right"
-                  formatter={(v: unknown) => `€${Number(v).toFixed(2)}`}
+                  formatter={(v: unknown) => {
+                    const pct = chartTotal > 0 ? Math.round((Number(v) / chartTotal) * 100) : 0
+                    return `€${Number(v).toFixed(2)}  ${pct}%`
+                  }}
                   style={{ fontSize: 12, fill: '#86868b', fontWeight: 500 }}
                 />
               </Bar>
@@ -363,17 +394,23 @@ function App() {
           <thead>
             <tr>
               <th>Merchant</th>
+              <th>Category</th>
               <th>Date</th>
               <th>Amount</th>
-              <th style={{ width: 60 }} />
+              <th style={{ width: 44 }} />
             </tr>
           </thead>
           <tbody>
             {data?.recent_receipts.map((r, i) => (
               <tr key={r.id} style={{ animationDelay: `${0.35 + i * 0.04}s` }} className="tx-row">
-                <td>
-                  <span className="tx-cat-dot" style={{ background: categoryColor('Others') }} />
+                <td className="tx-merchant">
+                  <span className="tx-cat-dot" style={{ background: categoryColor(r.category) }} />
                   {r.merchant}
+                </td>
+                <td>
+                  <span className="tx-badge" style={{ background: categoryColor(r.category) + '22', color: categoryColor(r.category) }}>
+                    {r.category}
+                  </span>
                 </td>
                 <td className="tx-date">{formatDate(r.date)}</td>
                 <td className="tx-amount">€{r.total_amount.toFixed(2)}</td>
@@ -384,7 +421,7 @@ function App() {
             ))}
             {(!data || data.recent_receipts.length === 0) && (
               <tr>
-                <td colSpan={4} className="empty-state">
+                <td colSpan={5} className="empty-state">
                   <div className="empty-icon">🧾</div>
                   <p>No receipts yet</p>
                   <p className="empty-hint">Click "+ New Receipt" to get started</p>
@@ -394,6 +431,21 @@ function App() {
           </tbody>
         </table>
       </section>
+
+      {/* ── Reset confirm modal ── */}
+      {showResetModal && (
+        <div className="modal-overlay" onClick={() => setShowResetModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-icon">⚠️</div>
+            <h2 className="modal-title">Clear all data?</h2>
+            <p className="modal-body">This will permanently delete all receipts and cannot be undone.</p>
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => setShowResetModal(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={doReset}>Clear All</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Toast ── */}
       {toast && (

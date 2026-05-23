@@ -166,17 +166,32 @@ async def get_dashboard_data(db: Session = Depends(get_db)):
     total_spent = sum(r.total_amount for r in receipts)
     receipt_count = len(receipts)
 
-    category_spend = {}
+    # Build category spend + item count, and top category per receipt
+    category_data: dict = {}
+    receipt_categories: dict = {}
     for item in items:
-        category_spend[item.category] = category_spend.get(item.category, 0) + item.price
+        # Global category totals
+        if item.category not in category_data:
+            category_data[item.category] = {"amount": 0.0, "count": 0}
+        category_data[item.category]["amount"] += item.price
+        category_data[item.category]["count"] += 1
+        # Per-receipt top category
+        if item.receipt_id not in receipt_categories:
+            receipt_categories[item.receipt_id] = {}
+        rc = receipt_categories[item.receipt_id]
+        rc[item.category] = rc.get(item.category, 0.0) + item.price
 
-    top_category = max(category_spend, key=category_spend.get) if category_spend else "N/A"
+    top_category = max(category_data, key=lambda c: category_data[c]["amount"]) if category_data else "N/A"
 
-    # Sort categories by spend descending for chart
     chart_data = sorted(
-        [{"name": cat, "value": round(amt, 2)} for cat, amt in category_spend.items()],
+        [{"name": cat, "value": round(d["amount"], 2), "count": d["count"]}
+         for cat, d in category_data.items()],
         key=lambda x: x["value"], reverse=True
     )
+
+    def receipt_top_cat(rid: int) -> str:
+        cats = receipt_categories.get(rid, {})
+        return max(cats, key=cats.get) if cats else "Others"
 
     return {
         "total_spent": round(total_spent, 2),
@@ -188,7 +203,8 @@ async def get_dashboard_data(db: Session = Depends(get_db)):
                 "id": r.id,
                 "merchant": r.merchant,
                 "date": r.date,
-                "total_amount": r.total_amount
+                "total_amount": r.total_amount,
+                "category": receipt_top_cat(r.id),
             } for r in receipts
         ]
     }
