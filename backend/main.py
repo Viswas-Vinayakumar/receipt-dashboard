@@ -34,31 +34,31 @@ logger.info("Initializing Backend...")
 # ── API key ────────────────────────────────────────────────────────────────
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL   = "llama-3.2-11b-vision-preview"
+XAI_API_URL = "https://api.x.ai/v1/chat/completions"
+XAI_MODEL   = "grok-2-vision-1212"
 
 def load_api_key() -> str:
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE) as f:
                 cfg = json.load(f)
-            key = cfg.get("groq_api_key", "").strip()
+            key = cfg.get("xai_api_key", "").strip()
             if key:
-                logger.info("Loaded Groq API key from config.json")
+                logger.info("Loaded xAI API key from config.json")
                 return key
         except Exception as e:
             logger.warning(f"Could not read config.json: {e}")
-    key = os.environ.get("GROQ_API_KEY", "").strip()
+    key = os.environ.get("XAI_API_KEY", "").strip()
     if key:
-        logger.info("Loaded Groq API key from environment variable")
+        logger.info("Loaded xAI API key from environment variable")
         return key
     logger.error(
-        "No Groq API key found. "
-        'Create ~/receipt-dashboard/app_data/config.json with {"groq_api_key": "YOUR_KEY"}'
+        "No xAI API key found. "
+        'Create ~/receipt-dashboard/app_data/config.json with {"xai_api_key": "YOUR_KEY"}'
     )
     return ""
 
-GROQ_API_KEY = load_api_key()
+XAI_API_KEY = load_api_key()
 
 # ── Database init ──────────────────────────────────────────────────────────
 try:
@@ -149,9 +149,9 @@ def _extract_json(text: str) -> str:
     return text
 
 
-def call_groq_vision(image_data: bytes, mime_type: str) -> dict:
+def call_xai_vision(image_data: bytes, mime_type: str) -> dict:
     """
-    Call Groq's vision endpoint with the image encoded as base64.
+    Call xAI Grok vision endpoint with the image encoded as base64.
     Returns parsed JSON dict from the model.
     Raises HTTPException on API errors.
     """
@@ -159,14 +159,14 @@ def call_groq_vision(image_data: bytes, mime_type: str) -> dict:
     data_url = f"data:{mime_type};base64,{b64}"
 
     payload = {
-        "model": GROQ_MODEL,
+        "model": XAI_MODEL,
         "messages": [
             {
                 "role": "user",
                 "content": [
                     {
                         "type": "image_url",
-                        "image_url": {"url": data_url}
+                        "image_url": {"url": data_url, "detail": "high"}
                     },
                     {
                         "type": "text",
@@ -180,7 +180,7 @@ def call_groq_vision(image_data: bytes, mime_type: str) -> dict:
     }
 
     headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Authorization": f"Bearer {XAI_API_KEY}",
         "Content-Type": "application/json"
     }
 
@@ -188,7 +188,7 @@ def call_groq_vision(image_data: bytes, mime_type: str) -> dict:
     for attempt in range(3):
         try:
             resp = http_requests.post(
-                GROQ_API_URL, json=payload, headers=headers, timeout=60
+                XAI_API_URL, json=payload, headers=headers, timeout=60
             )
 
             if resp.status_code == 200:
@@ -197,17 +197,16 @@ def call_groq_vision(image_data: bytes, mime_type: str) -> dict:
                 return json.loads(raw_text)
 
             if resp.status_code == 429:
-                # Parse Retry-After header or body
                 retry_after = resp.headers.get("retry-after", "")
                 try:
                     wait = float(retry_after) + 2 if retry_after else 65.0
                 except ValueError:
                     wait = 65.0
-                logger.warning(f"Groq rate limit — waiting {wait:.0f}s (attempt {attempt+1}/3)...")
+                logger.warning(f"xAI rate limit — waiting {wait:.0f}s (attempt {attempt+1}/3)...")
                 if wait > 300:
                     raise HTTPException(
                         status_code=429,
-                        detail="Daily quota reached. The free tier allows 14,400 req/day. Try again later or enter receipt manually."
+                        detail="Rate limit reached. Try again later or enter receipt manually."
                     )
                 if attempt < 2:
                     time.sleep(wait)
@@ -215,18 +214,18 @@ def call_groq_vision(image_data: bytes, mime_type: str) -> dict:
                     continue
                 raise HTTPException(
                     status_code=429,
-                    detail=f"Groq is busy — try again in {int(wait)}s, or enter receipt manually."
+                    detail=f"AI is busy — try again in {int(wait)}s, or enter receipt manually."
                 )
 
             if resp.status_code in (400, 401, 403):
-                logger.error(f"Groq auth/key error {resp.status_code}: {resp.text}")
+                logger.error(f"xAI auth/key error {resp.status_code}: {resp.text}")
                 raise HTTPException(
                     status_code=401,
-                    detail="Groq API key is invalid or revoked. Update app_data/config.json with a valid key."
+                    detail="xAI API key is invalid or revoked. Update app_data/config.json with a valid key."
                 )
 
             # Any other non-200
-            logger.error(f"Groq error {resp.status_code}: {resp.text}")
+            logger.error(f"xAI error {resp.status_code}: {resp.text}")
             raise HTTPException(
                 status_code=500,
                 detail=f"AI processing failed (HTTP {resp.status_code}): {resp.text[:200]}"
@@ -236,7 +235,7 @@ def call_groq_vision(image_data: bytes, mime_type: str) -> dict:
             raise
         except Exception as exc:
             last_err = exc
-            logger.warning(f"Groq request failed (attempt {attempt+1}/3): {exc}")
+            logger.warning(f"xAI request failed (attempt {attempt+1}/3): {exc}")
             if attempt < 2:
                 time.sleep(5)
                 continue
@@ -258,10 +257,10 @@ async def health_check():
 async def upload_receipt(file: UploadFile = File(...), db: Session = Depends(get_db)):
     logger.info(f"Received upload request: {file.filename}")
 
-    if not GROQ_API_KEY:
+    if not XAI_API_KEY:
         raise HTTPException(
             status_code=503,
-            detail="No Groq API key configured. Add your key to app_data/config.json."
+            detail="No xAI API key configured. Add your key to app_data/config.json."
         )
 
     file_path = os.path.join(UPLOAD_DIR, f"{datetime.now().timestamp()}_{file.filename}")
@@ -275,8 +274,8 @@ async def upload_receipt(file: UploadFile = File(...), db: Session = Depends(get
         with open(file_path, "rb") as f:
             image_data = f.read()
 
-        logger.info("Sending request to Groq AI (llama-3.2-11b-vision)...")
-        raw = call_groq_vision(image_data, mime_type)
+        logger.info("Sending request to xAI Grok vision...")
+        raw = call_xai_vision(image_data, mime_type)
 
         # Not a receipt
         if not raw.get("is_receipt", True):
