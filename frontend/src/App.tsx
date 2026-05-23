@@ -62,6 +62,16 @@ const formatMonth = (m: string) => {
 const emptyManualItem = (): ManualItem => ({ product_name: '', category: 'Groceries', price: '' })
 const todayISO = () => new Date().toISOString().split('T')[0]
 
+// ── Logo (Option B — Accent) ───────────────────────────────────────────────
+const LogoIcon = ({ size = 40 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <ellipse cx="40" cy="41" rx="22" ry="28" stroke="#1d1d1f" strokeWidth="2.5" strokeLinecap="round"/>
+    <line x1="29" y1="15" x2="29" y2="67" stroke="#d2d2d7" strokeWidth="2" strokeLinecap="round"/>
+    <line x1="40" y1="13" x2="40" y2="69" stroke="#0071e3" strokeWidth="2.5" strokeLinecap="round"/>
+    <line x1="51" y1="15" x2="51" y2="67" stroke="#d2d2d7" strokeWidth="2" strokeLinecap="round"/>
+  </svg>
+)
+
 // ── Component ──────────────────────────────────────────────────────────────
 function App() {
   // ── Core state ─────────────────────────────────────────────────────────
@@ -486,9 +496,12 @@ function App() {
 
       {/* ── Header ── */}
       <header>
-        <div>
-          <h1>Receipt Dashboard</h1>
-          <p className="subtitle">Your spending at a glance</p>
+        <div className="brand">
+          <LogoIcon size={42} />
+          <div>
+            <h1>Receipt Dashboard</h1>
+            <p className="subtitle">Your spending at a glance</p>
+          </div>
         </div>
         <div className="action-bar">
           <button className="btn btn-secondary" onClick={() => setShowResetModal(true)}>Reset</button>

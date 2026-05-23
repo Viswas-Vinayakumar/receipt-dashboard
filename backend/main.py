@@ -62,7 +62,8 @@ except Exception as e:
 
 # ── Gemini model ───────────────────────────────────────────────────────────
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-2.5-flash")
+# gemini-2.0-flash: 3-4× faster than 2.5-flash, free tier = 1500 requests/day
+model = genai.GenerativeModel("gemini-2.0-flash")
 
 app = FastAPI()
 
