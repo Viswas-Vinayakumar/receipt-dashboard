@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { Command } from '@tauri-apps/plugin-shell'
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import {
@@ -7,6 +7,7 @@ import {
 } from 'recharts'
 import './App.css'
 
+// ── Types ──────────────────────────────────────────────────────────────────
 interface DashboardData {
   total_spent: number;
   receipt_count: number;
@@ -15,12 +16,24 @@ interface DashboardData {
   recent_receipts: { id: number; merchant: string; date: string; total_amount: number; category: string }[];
 }
 
+interface DetailReceipt {
+  id: number;
+  merchant: string;
+  location: string;
+  date: string;
+  total_amount: number;
+  items: { product_name: string; category: string; price: number }[];
+}
+
 interface Toast {
   message: string;
   onUndo?: () => void;
   id: number;
 }
 
+type SortOption = 'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc' | 'merchant'
+
+// ── Constants ──────────────────────────────────────────────────────────────
 const CATEGORY_COLORS: Record<string, string> = {
   Groceries:   '#34d399',
   Bakery:      '#fb923c',
@@ -35,19 +48,30 @@ const CATEGORY_COLORS: Record<string, string> = {
 
 const categoryColor = (name: string) => CATEGORY_COLORS[name] ?? '#94a3b8'
 
+// ── Component ──────────────────────────────────────────────────────────────
 function App() {
-  const [data, setData]                   = useState<DashboardData | null>(null)
-  const [loading, setLoading]             = useState(false)
-  const [error, setError]                 = useState<string | null>(null)
-  const [toast, setToast]                 = useState<Toast | null>(null)
-  const [showUpload, setShowUpload]       = useState(false)
-  const [uploadStatus, setUploadStatus]   = useState('')
+  // Core state
+  const [data, setData]                     = useState<DashboardData | null>(null)
+  const [loading, setLoading]               = useState(false)
+  const [error, setError]                   = useState<string | null>(null)
+  const [toast, setToast]                   = useState<Toast | null>(null)
+  const [showUpload, setShowUpload]         = useState(false)
+  const [uploadStatus, setUploadStatus]     = useState('')
   const [connectionStatus, setConnectionStatus] = useState('Initializing...')
+  // Modals
   const [showResetModal, setShowResetModal] = useState(false)
+  const [detailReceipt, setDetailReceipt]   = useState<DetailReceipt | null>(null)
+  const [loadingDetail, setLoadingDetail]   = useState(false)
+  // Table controls
+  const [searchQuery, setSearchQuery]       = useState('')
+  const [sortBy, setSortBy]                 = useState<SortOption>('date-desc')
+  const [filterCategory, setFilterCategory] = useState('')
+
   const fileInputRef   = useRef<HTMLInputElement>(null)
   const undoTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const searchRef      = useRef<HTMLInputElement>(null)
 
-  // ── Data fetching ──────────────────────────────────────────────────────────
+  // ── Data fetching ────────────────────────────────────────────────────────
   const fetchData = async () => {
     for (const base of ['http://127.0.0.1:8888', 'http://localhost:8888']) {
       try {
@@ -63,7 +87,7 @@ function App() {
     setConnectionStatus('Waiting...')
   }
 
-  // ── Sidecar lifecycle ──────────────────────────────────────────────────────
+  // ── Sidecar lifecycle ────────────────────────────────────────────────────
   useEffect(() => {
     let started = false
     let cancelled = false
@@ -74,7 +98,6 @@ function App() {
       try {
         setConnectionStatus('Starting AI Engine...')
         const command = Command.sidecar('backend')
-
         command.stdout.on('data', (l: string) => console.log('[backend]', l))
         command.stderr.on('data', (l: string) => console.warn('[backend]', l))
 
@@ -128,14 +151,14 @@ function App() {
     return () => { cancelled = true; started = false }
   }, [])
 
-  // ── Toast ──────────────────────────────────────────────────────────────────
+  // ── Toast ────────────────────────────────────────────────────────────────
   const showToast = (message: string, onUndo?: () => void) => {
     setToast({ message, onUndo, id: Date.now() })
     if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current)
     undoTimeoutRef.current = setTimeout(() => setToast(null), 5000)
   }
 
-  // ── Upload ─────────────────────────────────────────────────────────────────
+  // ── Upload ───────────────────────────────────────────────────────────────
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
     if (!files.length) return
@@ -174,8 +197,9 @@ function App() {
     }
   }
 
-  // ── Delete with undo ───────────────────────────────────────────────────────
-  const handleDelete = async (id: number) => {
+  // ── Delete with undo ─────────────────────────────────────────────────────
+  const handleDelete = async (e: React.MouseEvent, id: number) => {
+    e.stopPropagation()
     if (!data) return
     const snapshot = data
     setData({ ...data, recent_receipts: data.recent_receipts.filter(r => r.id !== id) })
@@ -200,17 +224,59 @@ function App() {
     })
   }
 
-  // ── Reset ──────────────────────────────────────────────────────────────────
+  // ── Reset ────────────────────────────────────────────────────────────────
   const doReset = async () => {
     setShowResetModal(false)
     try {
       const res = await tauriFetch('http://127.0.0.1:8888/api/reset', { method: 'POST' })
       if (!res.ok) throw new Error()
+      setSearchQuery(''); setFilterCategory('')
       await fetchData(); showToast('All data cleared')
     } catch { showToast('Failed to reset data') }
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
+  // ── Receipt detail ───────────────────────────────────────────────────────
+  const handleRowClick = async (id: number) => {
+    setLoadingDetail(true)
+    setDetailReceipt(null)
+    try {
+      for (const base of ['http://127.0.0.1:8888', 'http://localhost:8888']) {
+        try {
+          const res = await tauriFetch(`${base}/api/receipts`)
+          if (res.ok) {
+            const receipts: DetailReceipt[] = await res.json()
+            const found = receipts.find(r => r.id === id)
+            if (found) { setDetailReceipt(found); return }
+          }
+        } catch {}
+      }
+      showToast('Could not load receipt details')
+    } finally {
+      setLoadingDetail(false)
+    }
+  }
+
+  // ── Export CSV ───────────────────────────────────────────────────────────
+  const exportCSV = () => {
+    if (!displayedReceipts.length) return
+    const header = ['Merchant', 'Category', 'Date', 'Amount (€)']
+    const rows = displayedReceipts.map(r => [
+      r.merchant, r.category, formatDate(r.date), r.total_amount.toFixed(2)
+    ])
+    const csv = [header, ...rows]
+      .map(row => row.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','))
+      .join('\n')
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }))
+    const a = Object.assign(document.createElement('a'), {
+      href: url,
+      download: `receipts-${new Date().toISOString().split('T')[0]}.csv`,
+    })
+    a.click()
+    URL.revokeObjectURL(url)
+    showToast(`Exported ${displayedReceipts.length} receipt${displayedReceipts.length !== 1 ? 's' : ''}`)
+  }
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
   const formatDate = (s: string) => {
     if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
       const [y, m, d] = s.split('-'); return `${d}.${m}.${y}`
@@ -220,15 +286,39 @@ function App() {
     return s
   }
 
+  // ── Derived values ───────────────────────────────────────────────────────
   const isActive    = connectionStatus === 'Active'
   const isError     = connectionStatus.includes('Failed') || connectionStatus.includes('Blocked') || connectionStatus.includes('Stopped')
   const dotClass    = isActive ? 'dot-active' : isError ? 'dot-error' : 'dot-warn'
   const statusColor = isActive ? '#10b981' : isError ? '#ef4444' : '#f59e0b'
+  const chartTotal  = data?.category_spend.reduce((s, e) => s + e.value, 0) ?? 0
+  const isFiltered  = !!(searchQuery.trim() || filterCategory)
 
-  // Chart total (sum of item prices, may differ slightly from receipt totals)
-  const chartTotal = data?.category_spend.reduce((s, e) => s + e.value, 0) ?? 0
+  const displayedReceipts = useMemo(() => {
+    if (!data) return []
+    let list = [...data.recent_receipts]
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      list = list.filter(r => r.merchant.toLowerCase().includes(q) || r.category.toLowerCase().includes(q))
+    }
+    if (filterCategory) {
+      list = list.filter(r => r.category === filterCategory)
+    }
+    list.sort((a, b) => {
+      switch (sortBy) {
+        case 'date-asc':    return a.date.localeCompare(b.date)
+        case 'date-desc':   return b.date.localeCompare(a.date)
+        case 'amount-desc': return b.total_amount - a.total_amount
+        case 'amount-asc':  return a.total_amount - b.total_amount
+        case 'merchant':    return a.merchant.localeCompare(b.merchant)
+      }
+    })
+    return list
+  }, [data, searchQuery, sortBy, filterCategory])
 
-  // ── Chart tooltip ──────────────────────────────────────────────────────────
+  const filteredTotal = displayedReceipts.reduce((s, r) => s + r.total_amount, 0)
+
+  // ── Chart tooltip ────────────────────────────────────────────────────────
   const ChartTooltip = ({ active, payload }: any) => {
     if (!active || !payload?.length) return null
     const d = payload[0].payload
@@ -250,7 +340,7 @@ function App() {
     )
   }
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  // ── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="app-container">
 
@@ -386,10 +476,67 @@ function App() {
       <section className="card transactions-card" style={{ animationDelay: '0.3s' }}>
         <div className="section-header">
           <h3>Transactions</h3>
-          {data && data.receipt_count > 0 && (
-            <span className="tx-count">{data.receipt_count} total</span>
-          )}
+          <span className="tx-count">
+            {data && data.receipt_count > 0 && (
+              isFiltered
+                ? `${displayedReceipts.length} of ${data.receipt_count}`
+                : `${data.receipt_count} total`
+            )}
+          </span>
         </div>
+
+        {/* ── Toolbar ── */}
+        {data && data.receipt_count > 0 && (
+          <div className="table-toolbar">
+            <div className="toolbar-left">
+              <div className="search-box">
+                <span className="search-icon">⌕</span>
+                <input
+                  ref={searchRef}
+                  className="search-input"
+                  type="text"
+                  placeholder="Search merchants…"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                />
+                {searchQuery && (
+                  <button className="search-clear" onClick={() => { setSearchQuery(''); searchRef.current?.focus() }}>×</button>
+                )}
+              </div>
+              <select className="select-ctrl" value={filterCategory} onChange={e => setFilterCategory(e.target.value)}>
+                <option value="">All Categories</option>
+                {data.category_spend.map(c => (
+                  <option key={c.name} value={c.name}>{c.name}</option>
+                ))}
+              </select>
+              <select className="select-ctrl" value={sortBy} onChange={e => setSortBy(e.target.value as SortOption)}>
+                <option value="date-desc">Newest first</option>
+                <option value="date-asc">Oldest first</option>
+                <option value="amount-desc">Highest amount</option>
+                <option value="amount-asc">Lowest amount</option>
+                <option value="merchant">Merchant A→Z</option>
+              </select>
+              {isFiltered && (
+                <button className="btn-clear" onClick={() => { setSearchQuery(''); setFilterCategory('') }}>
+                  Clear filters
+                </button>
+              )}
+            </div>
+            <div className="toolbar-right">
+              <button className="btn btn-icon" title="Print / Save as PDF" onClick={() => window.print()}>
+                ⎙
+              </button>
+              <button
+                className="btn btn-export"
+                onClick={exportCSV}
+                disabled={displayedReceipts.length === 0}
+              >
+                ↓ Export CSV
+              </button>
+            </div>
+          </div>
+        )}
+
         <table>
           <thead>
             <tr>
@@ -401,8 +548,14 @@ function App() {
             </tr>
           </thead>
           <tbody>
-            {data?.recent_receipts.map((r, i) => (
-              <tr key={r.id} style={{ animationDelay: `${0.35 + i * 0.04}s` }} className="tx-row">
+            {displayedReceipts.map((r, i) => (
+              <tr
+                key={r.id}
+                style={{ animationDelay: `${0.05 + i * 0.03}s` }}
+                className="tx-row"
+                onClick={() => handleRowClick(r.id)}
+                title="View receipt details"
+              >
                 <td className="tx-merchant">
                   <span className="tx-cat-dot" style={{ background: categoryColor(r.category) }} />
                   {r.merchant}
@@ -415,10 +568,12 @@ function App() {
                 <td className="tx-date">{formatDate(r.date)}</td>
                 <td className="tx-amount">€{r.total_amount.toFixed(2)}</td>
                 <td>
-                  <button className="delete-btn" onClick={() => handleDelete(r.id)}>✕</button>
+                  <button className="delete-btn" onClick={e => handleDelete(e, r.id)}>✕</button>
                 </td>
               </tr>
             ))}
+
+            {/* Empty: no data at all */}
             {(!data || data.recent_receipts.length === 0) && (
               <tr>
                 <td colSpan={5} className="empty-state">
@@ -428,9 +583,84 @@ function App() {
                 </td>
               </tr>
             )}
+
+            {/* Empty: filtered but no matches */}
+            {data && data.recent_receipts.length > 0 && displayedReceipts.length === 0 && (
+              <tr>
+                <td colSpan={5} className="empty-state">
+                  <div className="empty-icon">🔍</div>
+                  <p>No matching receipts</p>
+                  <p className="empty-hint">Try adjusting your search or filters</p>
+                </td>
+              </tr>
+            )}
           </tbody>
+
+          {/* Filtered total footer */}
+          {displayedReceipts.length > 0 && (
+            <tfoot>
+              <tr className="tx-footer">
+                <td colSpan={3}>
+                  {isFiltered ? `Showing ${displayedReceipts.length} of ${data?.receipt_count}` : `${displayedReceipts.length} receipt${displayedReceipts.length !== 1 ? 's' : ''}`}
+                </td>
+                <td className="tx-amount tx-footer-total">€{filteredTotal.toFixed(2)}</td>
+                <td />
+              </tr>
+            </tfoot>
+          )}
         </table>
       </section>
+
+      {/* ── Receipt detail modal ── */}
+      {(loadingDetail || detailReceipt) && (
+        <div className="modal-overlay" onClick={() => { setDetailReceipt(null); setLoadingDetail(false) }}>
+          <div className="modal detail-modal" onClick={e => e.stopPropagation()}>
+            {loadingDetail ? (
+              <div className="detail-loading">
+                <div className="loading-spinner" />
+                <p>Loading receipt…</p>
+              </div>
+            ) : detailReceipt && (
+              <>
+                <div className="detail-header">
+                  <div className="detail-header-info">
+                    <h2 className="modal-title">{detailReceipt.merchant}</h2>
+                    {detailReceipt.location && (
+                      <p className="detail-location">{detailReceipt.location}</p>
+                    )}
+                    <p className="detail-meta">{formatDate(detailReceipt.date)}</p>
+                  </div>
+                  <button className="detail-close" onClick={() => setDetailReceipt(null)}>✕</button>
+                </div>
+
+                <div className="detail-items">
+                  {detailReceipt.items.length === 0 ? (
+                    <p className="detail-no-items">No item breakdown available</p>
+                  ) : detailReceipt.items.map((item, i) => (
+                    <div key={i} className="detail-item">
+                      <div className="detail-item-left">
+                        <span className="tx-cat-dot" style={{ background: categoryColor(item.category), width: 8, height: 8, flexShrink: 0 }} />
+                        <span className="detail-item-name">{item.product_name}</span>
+                      </div>
+                      <div className="detail-item-right">
+                        <span className="tx-badge" style={{ background: categoryColor(item.category) + '22', color: categoryColor(item.category) }}>
+                          {item.category}
+                        </span>
+                        <span className="detail-item-price">€{item.price.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="detail-footer">
+                  <span>Total paid</span>
+                  <strong>€{detailReceipt.total_amount.toFixed(2)}</strong>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── Reset confirm modal ── */}
       {showResetModal && (
