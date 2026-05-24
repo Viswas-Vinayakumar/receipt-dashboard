@@ -1,5 +1,6 @@
 import os
 import re
+import base64
 import shutil
 import json
 import time
@@ -8,10 +9,10 @@ from datetime import datetime
 from typing import List
 import logging
 
+import httpx
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-import google.generativeai as genai
 from pydantic import BaseModel
 
 import models
@@ -25,32 +26,11 @@ logging.basicConfig(
     handlers=[logging.FileHandler(log_file), logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
-logger.info("Initializing Backend...")
+logger.info("Initializing Backend (Ollama local AI)...")
 
-# ── API key ────────────────────────────────────────────────────────────────
-CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
-
-def load_api_key() -> str:
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE) as f:
-                cfg = json.load(f)
-            key = cfg.get("gemini_api_key", "").strip()
-            if key:
-                logger.info("Loaded Gemini API key from config.json")
-                return key
-        except Exception as e:
-            logger.warning(f"Could not read config.json: {e}")
-    key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if key:
-        logger.info("Loaded Gemini API key from environment variable")
-        return key
-    logger.error("No Gemini API key found.")
-    return ""
-
-GEMINI_API_KEY = load_api_key()
-genai.configure(api_key=GEMINI_API_KEY)
-gemini_model = genai.GenerativeModel("gemini-2.0-flash")
+# ── Ollama config ──────────────────────────────────────────────────────────
+OLLAMA_URL   = "http://localhost:11434"
+OLLAMA_MODEL = "gemma4:e4b"
 
 # ── Database ───────────────────────────────────────────────────────────────
 try:
@@ -97,7 +77,7 @@ class EditReceiptIn(BaseModel):
     total_amount: float
     items: List[ReceiptItem] = []
 
-# ── Helpers ────────────────────────────────────────────────────────────────
+# ── Prompt ─────────────────────────────────────────────────────────────────
 PROMPT = """Analyze this image and determine if it is a receipt (retail, grocery, restaurant, pharmacy, transport, etc.).
 
 If it is NOT a receipt (e.g. a selfie, landscape, screenshot, document, or unrelated photo):
@@ -126,19 +106,45 @@ Return ONLY a valid JSON object — no markdown, no explanation, no code fences:
 }"""
 
 
-def _parse_retry_after(err_str: str) -> int:
-    m = re.search(r'retry[_ ]in[_ ](\d+(?:\.\d+)?)', err_str, re.IGNORECASE)
-    return int(float(m.group(1))) + 2 if m else 62
+# ── Helpers ────────────────────────────────────────────────────────────────
+def _extract_json(text: str) -> dict:
+    """Strip markdown fences and parse JSON from model response."""
+    text = re.sub(r'```(?:json)?\s*', '', text).strip().rstrip('`').strip()
+    start = text.find('{')
+    end   = text.rfind('}') + 1
+    if start >= 0 and end > start:
+        return json.loads(text[start:end])
+    raise ValueError(f"No JSON object found in response: {text[:300]}")
 
 
-def _is_rate_limit(exc: Exception) -> bool:
-    s = str(exc)
-    return "429" in s or "quota" in s.lower() or "ResourceExhausted" in type(exc).__name__
+def call_ollama(image_data: bytes) -> dict:
+    """Send image to local Ollama gemma4:e4b and return parsed JSON dict."""
+    image_b64 = base64.b64encode(image_data).decode()
+    payload = {
+        "model":  OLLAMA_MODEL,
+        "prompt": PROMPT,
+        "images": [image_b64],
+        "stream": False,
+        "format": "json",
+        "options": {"temperature": 0.1, "num_predict": 1024},
+    }
+    try:
+        with httpx.Client(timeout=180.0) as client:
+            resp = client.post(f"{OLLAMA_URL}/api/generate", json=payload)
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503,
+            detail="Ollama is not running. Start it with: ollama serve")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504,
+            detail="Ollama timed out — image may be too large")
 
+    if resp.status_code != 200:
+        raise HTTPException(status_code=500,
+            detail=f"Ollama error {resp.status_code}: {resp.text[:300]}")
 
-def _is_invalid_key(exc: Exception) -> bool:
-    s = str(exc)
-    return any(c in s for c in ("400", "401", "403", "API_KEY_INVALID"))
+    response_text = resp.json().get("response", "")
+    logger.info(f"Ollama raw: {response_text[:400]}")
+    return _extract_json(response_text)
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────
@@ -151,39 +157,17 @@ async def health_check():
 async def upload_receipt(file: UploadFile = File(...), db: Session = Depends(get_db)):
     logger.info(f"Upload: {file.filename}")
 
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=503,
-            detail="No Gemini API key configured. Add it to app_data/config.json.")
-
     file_path = os.path.join(UPLOAD_DIR, f"{datetime.now().timestamp()}_{file.filename}")
     with open(file_path, "wb") as buf:
         shutil.copyfileobj(file.file, buf)
-
-    mime_type = file.content_type or "image/jpeg"
 
     try:
         with open(file_path, "rb") as f:
             image_data = f.read()
 
-        logger.info("Calling Gemini AI...")
-        try:
-            response = gemini_model.generate_content(
-                [PROMPT, {"mime_type": mime_type, "data": image_data}],
-                generation_config={"response_mime_type": "application/json"}
-            )
-        except Exception as exc:
-            # IMPORTANT: Never sleep here — return immediately so frontend stays responsive
-            if _is_rate_limit(exc):
-                wait = _parse_retry_after(str(exc))
-                logger.warning(f"Rate limit hit — returning wait={wait}s to frontend")
-                raise HTTPException(status_code=429, detail=f"rate_limit:{wait}")
-            if _is_invalid_key(exc):
-                raise HTTPException(status_code=401,
-                    detail="Gemini API key is invalid. Update app_data/config.json.")
-            logger.error(f"Gemini error: {exc}")
-            raise HTTPException(status_code=500, detail=f"AI error: {exc}")
-
-        raw = json.loads(response.text)
+        logger.info(f"Calling Ollama ({OLLAMA_MODEL})...")
+        raw = call_ollama(image_data)
+        logger.info(f"Parsed: {raw}")
 
         if not raw.get("is_receipt", True):
             try: os.remove(file_path)
@@ -254,7 +238,7 @@ async def get_dashboard_data(db: Session = Depends(get_db)):
     receipts = db.query(models.Receipt).order_by(models.Receipt.upload_date.desc()).all()
     items    = db.query(models.Item).all()
 
-    total_spent = sum(r.total_amount for r in receipts)
+    total_spent    = sum(r.total_amount for r in receipts)
     category_data: dict = {}
     receipt_categories: dict = {}
     monthly: dict = defaultdict(float)
