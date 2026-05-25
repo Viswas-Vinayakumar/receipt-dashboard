@@ -100,7 +100,7 @@ function App() {
   // ── Upload panel ────────────────────────────────────────────────────────
   const [showUpload, setShowUpload]           = useState(false)
   const [uploadMode, setUploadMode]           = useState<UploadMode>('scan')
-  const [uploadStatus, setUploadStatus]       = useState('')
+  const [, setUploadStatus]                   = useState('')
   const [uploadErr, setUploadErr]             = useState<{ msg: string; isNotReceipt: boolean } | null>(null)
   const [isDragging, setIsDragging]           = useState(false)
 
@@ -130,8 +130,18 @@ function App() {
   const [insights, setInsights]               = useState<InsightsData | null>(null)
   const [insightTab, setInsightTab]           = useState<InsightTab>('store')
   const [expandedMonths, setExpandedMonths]   = useState<Set<string>>(new Set())
+  const [insightShowAll, setInsightShowAll]   = useState({ store: false, product: false, month: false })
   const [showEnginePopup, setShowEnginePopup] = useState(false)
   const engineShownRef                        = useRef(false)
+
+  // ── Scan animation phases ─────────────────────────────────────────────────
+  const SCAN_PHASES = ['Reading receipt…', 'Detecting items…', 'Extracting totals…', 'Finalising…']
+  const [scanPhase, setScanPhase]             = useState(0)
+  useEffect(() => {
+    if (!loading) { setScanPhase(0); return }
+    const t = setInterval(() => setScanPhase(p => (p + 1) % SCAN_PHASES.length), 2200)
+    return () => clearInterval(t)
+  }, [loading])
 
   // ── Dark mode ─────────────────────────────────────────────────────────────
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('darkMode') === 'true')
@@ -667,30 +677,47 @@ function App() {
             </div>
           </div>
 
-          {chartTab === 'category' && data && data.category_spend.length > 0 && (
+          {chartTab === 'category' && data && data.category_spend.filter(c => c.value > 0).length > 0 && (() => {
+            const rows = data.category_spend.filter(c => c.value > 0)
+            return (
             <>
-              <p className="chart-subtitle">{data.category_spend.length} categories · €{chartTotal.toFixed(2)} total</p>
-              <ResponsiveContainer width="100%" height={Math.max(100, data.category_spend.length * 56)}>
-                <BarChart data={data.category_spend} layout="vertical" margin={{ top: 4, right: 120, left: 0, bottom: 4 }}>
+              <p className="chart-subtitle">{rows.length} categor{rows.length !== 1 ? 'ies' : 'y'} · €{chartTotal.toFixed(2)} total</p>
+              <ResponsiveContainer width="100%" height={Math.max(100, rows.length * 58)}>
+                <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 90, left: 0, bottom: 4 }}>
+                  <defs>
+                    {rows.map(e => (
+                      <linearGradient key={e.name} id={`grad-${e.name}`} x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%" stopColor={catColor(e.name)} stopOpacity={0.72} />
+                        <stop offset="100%" stopColor={catColor(e.name)} stopOpacity={1} />
+                      </linearGradient>
+                    ))}
+                  </defs>
                   <XAxis type="number" hide domain={[0, 'dataMax']} />
-                  <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 13, fill: '#86868b' }} axisLine={false} tickLine={false} />
+                  <YAxis type="category" dataKey="name" width={116} tick={{ fontSize: 13, fill: '#86868b' }} axisLine={false} tickLine={false} />
                   <Tooltip content={<CategoryTooltip />} cursor={{ fill: 'rgba(0,0,0,0.03)' }} />
-                  <Bar dataKey="value" radius={[0, 6, 6, 0]} isAnimationActive animationDuration={900} animationEasing="ease-out">
-                    {data.category_spend.map(e => <Cell key={e.name} fill={catColor(e.name)} />)}
+                  <Bar dataKey="value" radius={[0, 7, 7, 0]} isAnimationActive animationDuration={900} animationEasing="ease-out">
+                    {rows.map(e => <Cell key={e.name} fill={`url(#grad-${e.name})`} />)}
+                    <LabelList
+                      dataKey="value"
+                      position="insideRight"
+                      formatter={(v: unknown) => {
+                        const pct = chartTotal > 0 ? Math.round((Number(v) / chartTotal) * 100) : 0
+                        return pct >= 8 ? `${pct}%` : ''
+                      }}
+                      style={{ fontSize: 11, fill: 'rgba(255,255,255,0.92)', fontWeight: 700 }}
+                    />
                     <LabelList
                       dataKey="value"
                       position="right"
-                      formatter={(v: unknown) => {
-                        const pct = chartTotal > 0 ? Math.round((Number(v) / chartTotal) * 100) : 0
-                        return `€${Number(v).toFixed(2)}  ${pct}%`
-                      }}
+                      formatter={(v: unknown) => `€${Number(v).toFixed(2)}`}
                       style={{ fontSize: 12, fill: '#86868b', fontWeight: 500 }}
                     />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </>
-          )}
+            )
+          })()}
 
           {chartTab === 'monthly' && data && data.monthly_trend.length > 0 && (
             <>
@@ -765,10 +792,20 @@ function App() {
                         onClick={e => { e.stopPropagation(); stopRetry() }}>Cancel</button>
                     </div>
                   ) : loading ? (
-                    <div className="upload-loading">
-                      <div className="loading-spinner" />
-                      <p className="upload-analyzing">{uploadStatus || 'Analyzing receipt…'}</p>
-                      <p className="upload-hint-sub">AI is reading your receipt</p>
+                    <div className="scan-wrapper">
+                      <div className="scan-receipt">
+                        <div className="scan-receipt-lines">
+                          <div className="scan-rline l" /><div className="scan-rline m" />
+                          <div className="scan-rline l" /><div className="scan-rline s" />
+                          <div className="scan-rline m" /><div className="scan-rline l" />
+                          <div className="scan-rline s" />
+                        </div>
+                        <div className="scan-beam" />
+                      </div>
+                      <div className="scan-status">
+                        <p className="scan-phase" key={scanPhase}>{SCAN_PHASES[scanPhase]}</p>
+                        <p className="upload-hint-sub">Local AI · stays on your Mac</p>
+                      </div>
                     </div>
                   ) : (
                     <div className="upload-idle">
@@ -866,32 +903,28 @@ function App() {
       )}
 
       {/* ── Insights ── */}
-      {insights && (insights.by_store.length > 0 || insights.by_product.length > 0 || insights.by_month.length > 0) && (
+      {insights && (insights.by_store.length > 0 || insights.by_product.length > 0 || insights.by_month.length > 0) && (() => {
+        const LIMIT = 5
+        return (
         <section className="card insights-card" style={{ animationDelay: '0.28s' }}>
           <div className="chart-header">
             <h3>Insights</h3>
             <div className="chart-tabs">
-              <button
-                className={`chart-tab${insightTab === 'store' ? ' active' : ''}`}
-                onClick={() => setInsightTab('store')}
-              >By Store</button>
-              <button
-                className={`chart-tab${insightTab === 'product' ? ' active' : ''}`}
-                onClick={() => setInsightTab('product')}
-                disabled={insights.by_product.length === 0}
-              >By Product</button>
-              <button
-                className={`chart-tab${insightTab === 'month' ? ' active' : ''}`}
-                onClick={() => setInsightTab('month')}
-                disabled={insights.by_month.length === 0}
-              >By Month</button>
+              <button className={`chart-tab${insightTab === 'store' ? ' active' : ''}`}
+                onClick={() => { setInsightTab('store'); setInsightShowAll(p => ({...p, store: false})) }}>By Store</button>
+              <button className={`chart-tab${insightTab === 'product' ? ' active' : ''}`}
+                onClick={() => { setInsightTab('product'); setInsightShowAll(p => ({...p, product: false})) }}
+                disabled={insights.by_product.length === 0}>By Product</button>
+              <button className={`chart-tab${insightTab === 'month' ? ' active' : ''}`}
+                onClick={() => { setInsightTab('month'); setInsightShowAll(p => ({...p, month: false})) }}
+                disabled={insights.by_month.length === 0}>By Month</button>
             </div>
           </div>
 
           {/* ── By Store ── */}
           {insightTab === 'store' && (
             <div className="insights-list">
-              {insights.by_store.map((s, i) => {
+              {(insightShowAll.store ? insights.by_store : insights.by_store.slice(0, LIMIT)).map((s, i) => {
                 const maxTotal = insights.by_store[0]?.total || 1
                 const pct = Math.round((s.total / maxTotal) * 100)
                 return (
@@ -909,6 +942,11 @@ function App() {
                   </div>
                 )
               })}
+              {insights.by_store.length > LIMIT && (
+                <button className="insight-expand-btn" onClick={() => setInsightShowAll(p => ({...p, store: !p.store}))}>
+                  {insightShowAll.store ? '↑ Show less' : `↓ Show ${insights.by_store.length - LIMIT} more`}
+                </button>
+              )}
             </div>
           )}
 
@@ -920,7 +958,7 @@ function App() {
               ) : (
                 <>
                   <p className="chart-subtitle">{insights.by_product.length} unique product{insights.by_product.length !== 1 ? 's' : ''} tracked</p>
-                  {insights.by_product.map((p, i) => {
+                  {(insightShowAll.product ? insights.by_product : insights.by_product.slice(0, LIMIT)).map((p, i) => {
                     const maxTotal = insights.by_product[0]?.total || 1
                     const pct = Math.round((p.total / maxTotal) * 100)
                     return (
@@ -938,6 +976,11 @@ function App() {
                       </div>
                     )
                   })}
+                  {insights.by_product.length > LIMIT && (
+                    <button className="insight-expand-btn" onClick={() => setInsightShowAll(p => ({...p, product: !p.product}))}>
+                      {insightShowAll.product ? '↑ Show less' : `↓ Show ${insights.by_product.length - LIMIT} more`}
+                    </button>
+                  )}
                 </>
               )}
             </div>
@@ -948,7 +991,7 @@ function App() {
             <div className="insights-month-list">
               {insights.by_month.length === 0 ? (
                 <p className="insights-empty">No monthly data yet</p>
-              ) : insights.by_month.map(m => {
+              ) : (insightShowAll.month ? insights.by_month : insights.by_month.slice(0, LIMIT)).map(m => {
                 const isOpen = expandedMonths.has(m.month)
                 const toggle = () => setExpandedMonths(prev => {
                   const next = new Set(prev)
@@ -991,10 +1034,16 @@ function App() {
                   </div>
                 )
               })}
+              {insights.by_month.length > LIMIT && (
+                <button className="insight-expand-btn" onClick={() => setInsightShowAll(p => ({...p, month: !p.month}))}>
+                  {insightShowAll.month ? '↑ Show less' : `↓ Show ${insights.by_month.length - LIMIT} more`}
+                </button>
+              )}
             </div>
           )}
         </section>
-      )}
+        )
+      })()}
 
       {/* ── Transactions ── */}
       <section className="card transactions-card" style={{ animationDelay: '0.3s' }}>
