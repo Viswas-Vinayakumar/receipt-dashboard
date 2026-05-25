@@ -14,7 +14,7 @@ class Receipt(Base):
     location = Column(String)
     date = Column(String) # Date on receipt
     total_amount = Column(Float)
-    
+
     items = relationship("Item", back_populates="receipt")
 
 class Item(Base):
@@ -27,3 +27,13 @@ class Item(Base):
     price = Column(Float)
 
     receipt = relationship("Receipt", back_populates="items")
+
+class CategoryCorrection(Base):
+    """Stores learned category corrections from user edits — the self-improvement loop."""
+    __tablename__ = "category_corrections"
+
+    id                 = Column(Integer, primary_key=True, index=True)
+    product_name_lower = Column(String, unique=True, index=True)  # normalised lookup key
+    correct_category   = Column(String)
+    correction_count   = Column(Integer, default=1)              # how many times confirmed
+    last_updated       = Column(DateTime, default=datetime.datetime.utcnow)

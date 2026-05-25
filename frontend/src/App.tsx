@@ -44,7 +44,23 @@ interface InsightsData {
 type SortOption  = 'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc' | 'merchant'
 type ChartTab    = 'category' | 'monthly'
 type UploadMode  = 'scan' | 'manual'
-type InsightTab  = 'store' | 'product' | 'month'
+type InsightTab  = 'store' | 'product' | 'month' | 'analytics'
+
+interface AnalyticsData {
+  status: string
+  forecast?: {
+    current_total: number; predicted_total: number; current_day: number
+    days_in_month: number; daily_avg: number; remaining_days: number
+  } | null
+  anomalies: { receipt_id: number; merchant: string; date: string; amount: number; typical: number; z_score: number; severity: string; pct_above: number }[]
+  price_trends: { product: string; first_price: number; latest_price: number; pct_change: number; first_date: string; latest_date: string; occurrences: number; direction: string }[]
+  recurring: { merchant: string; visit_count: number; avg_gap_days: number; pattern: string; last_visit: string; next_expected: string; days_until_next: number; consistency: number }[]
+  quality_issues: { receipt_id: number; merchant: string; date: string; total: number; items_sum: number; gap: number; pct_off: number }[]
+  category_momentum: { category: string; current: number; prev_avg: number; momentum: number; trend: string }[]
+  chains: { chain: string; branches: string[]; total: number; visits: number }[]
+  corrections_learned: number
+  corrections: { product: string; category: string }[]
+}
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const CATEGORIES = ['Groceries','Bakery','Beverages','Electronics','Dining','Transport','Health','Accommodation','Deposit','Others']
@@ -200,6 +216,7 @@ function App() {
 
   // ── Insights ─────────────────────────────────────────────────────────────
   const [insights, setInsights]               = useState<InsightsData | null>(null)
+  const [analytics, setAnalytics]             = useState<AnalyticsData | null>(null)
   const [insightTab, setInsightTab]           = useState<InsightTab>('store')
   const [expandedMonths, setExpandedMonths]   = useState<Set<string>>(new Set())
   const [insightShowAll, setInsightShowAll]   = useState({ store: false, product: false, month: false })
@@ -332,6 +349,10 @@ function App() {
           try {
             const insRes = await tauriFetch(`${base}/api/insights`)
             if (insRes.ok) setInsights(await insRes.json())
+          } catch {}
+          try {
+            const anlRes = await tauriFetch(`${base}/api/analytics`)
+            if (anlRes.ok) setAnalytics(await anlRes.json())
           } catch {}
           return
         }
@@ -1172,6 +1193,8 @@ function App() {
               <button className={`chart-tab${insightTab === 'month' ? ' active' : ''}`}
                 onClick={() => { setInsightTab('month'); setInsightShowAll(p => ({...p, month: false})) }}
                 disabled={insights.by_month.length === 0}>By Month</button>
+              <button className={`chart-tab${insightTab === 'analytics' ? ' active' : ''} chart-tab-ai`}
+                onClick={() => setInsightTab('analytics')}>✦ Analytics</button>
             </div>
           </div>
 
@@ -1292,6 +1315,175 @@ function App() {
                 <button className="insight-expand-btn" onClick={() => setInsightShowAll(p => ({...p, month: !p.month}))}>
                   {insightShowAll.month ? '↑ Show less' : `↓ Show ${insights.by_month.length - LIMIT} more`}
                 </button>
+              )}
+            </div>
+          )}
+
+          {/* ── Analytics tab ── */}
+          {insightTab === 'analytics' && (
+            <div className="analytics-panel">
+              {!analytics || analytics.status === 'no_data' ? (
+                <p className="insights-empty">Scan more receipts to unlock analytics</p>
+              ) : (
+                <>
+                  {/* Forecast */}
+                  {analytics.forecast && (
+                    <div className="anl-block">
+                      <div className="anl-block-title">📈 Spending Forecast</div>
+                      <div className="anl-forecast">
+                        <div className="anl-forecast-main">
+                          <span className="anl-forecast-val">€{analytics.forecast.predicted_total.toFixed(2)}</span>
+                          <span className="anl-forecast-label">predicted this month</span>
+                        </div>
+                        <div className="anl-forecast-bar-wrap">
+                          <div className="anl-forecast-bar">
+                            <div className="anl-forecast-fill"
+                              style={{ width: `${Math.min((analytics.forecast.current_total / analytics.forecast.predicted_total) * 100, 100).toFixed(0)}%` }} />
+                          </div>
+                          <div className="anl-forecast-meta">
+                            <span>€{analytics.forecast.current_total.toFixed(2)} spent · day {analytics.forecast.current_day}/{analytics.forecast.days_in_month}</span>
+                            <span>€{analytics.forecast.daily_avg.toFixed(2)}/day avg</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Category Momentum */}
+                  {analytics.category_momentum.length > 0 && (
+                    <div className="anl-block">
+                      <div className="anl-block-title">📊 Category Momentum <span className="anl-subtitle">vs last 3 months avg</span></div>
+                      <div className="anl-momentum-list">
+                        {analytics.category_momentum.slice(0, 6).map(c => (
+                          <div key={c.category} className="anl-momentum-row">
+                            <div className="anl-momentum-left">
+                              <span className="anl-dot" style={{ background: catColor(c.category) }} />
+                              <span className="anl-momentum-name">{c.category}</span>
+                            </div>
+                            <div className="anl-momentum-right">
+                              <span className={`anl-momentum-badge anl-trend-${c.trend}`}>
+                                {c.momentum > 0 ? '↑' : c.momentum < 0 ? '↓' : '→'}{Math.abs(c.momentum).toFixed(0)}%
+                              </span>
+                              <span className="anl-momentum-amt">€{c.current.toFixed(2)}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Recurring Patterns */}
+                  {analytics.recurring.length > 0 && (
+                    <div className="anl-block">
+                      <div className="anl-block-title">🔄 Recurring Patterns</div>
+                      <div className="anl-recurring-list">
+                        {analytics.recurring.slice(0, 5).map(r => (
+                          <div key={r.merchant} className="anl-recurring-row">
+                            <div className="anl-recurring-info">
+                              <span className="anl-recurring-merchant">{r.merchant}</span>
+                              <span className="anl-recurring-pattern">{r.pattern} · every ~{r.avg_gap_days.toFixed(0)} days · {r.visit_count} visits</span>
+                            </div>
+                            <div className={`anl-next-badge ${r.days_until_next < 0 ? 'overdue' : r.days_until_next <= 3 ? 'soon' : 'upcoming'}`}>
+                              {r.days_until_next < 0
+                                ? `${Math.abs(r.days_until_next)}d overdue`
+                                : r.days_until_next === 0 ? 'Due today'
+                                : `in ${r.days_until_next}d`}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Anomalies */}
+                  {analytics.anomalies.length > 0 && (
+                    <div className="anl-block">
+                      <div className="anl-block-title">⚡ Unusual Purchases</div>
+                      <div className="anl-anomaly-list">
+                        {analytics.anomalies.slice(0, 4).map(a => (
+                          <div key={a.receipt_id} className="anl-anomaly-row" onClick={() => handleRowClick(a.receipt_id)} style={{ cursor: 'pointer' }}>
+                            <div className="anl-anomaly-info">
+                              <span className="anl-anomaly-merchant">{a.merchant}</span>
+                              <span className="anl-anomaly-meta">{formatDate(a.date)} · typical €{a.typical.toFixed(2)}</span>
+                            </div>
+                            <div className="anl-anomaly-right">
+                              <span className={`anl-severity anl-severity-${a.severity}`}>{a.severity}</span>
+                              <span className="anl-anomaly-amt">€{a.amount.toFixed(2)}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Price Trends */}
+                  {analytics.price_trends.length > 0 && (
+                    <div className="anl-block">
+                      <div className="anl-block-title">💰 Price Changes</div>
+                      <div className="anl-price-list">
+                        {analytics.price_trends.slice(0, 6).map(p => (
+                          <div key={p.product} className="anl-price-row">
+                            <span className="anl-price-product">{p.product}</span>
+                            <div className="anl-price-right">
+                              <span className="anl-price-old">€{p.first_price.toFixed(2)}</span>
+                              <span className="anl-price-arrow">{p.direction === 'up' ? '→' : '→'}</span>
+                              <span className="anl-price-new">€{p.latest_price.toFixed(2)}</span>
+                              <span className={`anl-price-pct ${p.direction === 'up' ? 'price-up' : 'price-down'}`}>
+                                {p.pct_change > 0 ? '+' : ''}{p.pct_change.toFixed(0)}%
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Quality Issues */}
+                  {analytics.quality_issues.length > 0 && (
+                    <div className="anl-block">
+                      <div className="anl-block-title">⚠️ Parsing Issues <span className="anl-subtitle">item totals don't match — click to fix</span></div>
+                      <div className="anl-quality-list">
+                        {analytics.quality_issues.slice(0, 4).map(q => (
+                          <div key={q.receipt_id} className="anl-quality-row" onClick={() => handleRowClick(q.receipt_id)} style={{ cursor: 'pointer' }}>
+                            <div className="anl-quality-info">
+                              <span className="anl-quality-merchant">{q.merchant}</span>
+                              <span className="anl-quality-meta">{formatDate(q.date)}</span>
+                            </div>
+                            <div className="anl-quality-right">
+                              <span className="anl-quality-diff">items €{q.items_sum.toFixed(2)} vs total €{q.total.toFixed(2)}</span>
+                              <span className="anl-quality-pct">{q.pct_off.toFixed(0)}% off</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Self-learning status */}
+                  <div className="anl-block anl-learning-block">
+                    <div className="anl-block-title">🧠 AI Self-Learning</div>
+                    <div className="anl-learning-row">
+                      <div className="anl-learning-info">
+                        <span className="anl-learning-count">{analytics.corrections_learned}</span>
+                        <span className="anl-learning-label">category correction{analytics.corrections_learned !== 1 ? 's' : ''} learned from your edits</span>
+                      </div>
+                      {analytics.corrections_learned === 0 ? (
+                        <p className="anl-learning-hint">Edit a receipt's item categories — the AI will remember and apply them automatically next time.</p>
+                      ) : (
+                        <div className="anl-corrections-list">
+                          {analytics.corrections.slice(0, 8).map(c => (
+                            <span key={c.product} className="anl-correction-chip">
+                              {c.product} → <strong>{c.category}</strong>
+                            </span>
+                          ))}
+                          {analytics.corrections.length > 8 && (
+                            <span className="anl-correction-chip anl-correction-more">+{analytics.corrections.length - 8} more</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </>
               )}
             </div>
           )}

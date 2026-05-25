@@ -6,8 +6,11 @@ import json
 import io
 import time
 import hashlib
+import math
+import calendar
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, date as date_type, timedelta
+from statistics import mean, stdev, median
 from typing import List
 import logging
 
@@ -82,6 +85,24 @@ try:
     _db.close()
 except Exception as _e:
     logger.warning(f"Hash backfill warning: {_e}")
+
+# ── Self-learning: category corrections loaded into memory ─────────────────
+_CATEGORY_CORRECTIONS: dict = {}   # {product_name_lower: correct_category}
+
+def _load_corrections():
+    global _CATEGORY_CORRECTIONS
+    try:
+        from database import SessionLocal
+        _db = SessionLocal()
+        rows = _db.query(models.CategoryCorrection).all()
+        _CATEGORY_CORRECTIONS = {r.product_name_lower: r.correct_category for r in rows}
+        _db.close()
+        if _CATEGORY_CORRECTIONS:
+            logger.info(f"Loaded {len(_CATEGORY_CORRECTIONS)} learned category corrections")
+    except Exception as e:
+        logger.warning(f"Could not load category corrections: {e}")
+
+_load_corrections()
 
 app = FastAPI()
 app.add_middleware(
@@ -229,6 +250,11 @@ def _validate_and_fix(data: dict) -> dict:
             item["category"] = "Others"
         pname = item.get("product_name", "").strip()
         if pname and not _is_total_line(pname):
+            # Apply any learned category correction from user edits
+            correction = _CATEGORY_CORRECTIONS.get(pname.lower())
+            if correction:
+                item["category"] = correction
+                logger.info(f"Applied learned correction: '{pname}' → {correction}")
             clean_items.append(item)
     data["items"] = clean_items
 
@@ -440,15 +466,45 @@ async def edit_receipt(receipt_id: int, data: EditReceiptIn, db: Session = Depen
     receipt = db.query(models.Receipt).filter(models.Receipt.id == receipt_id).first()
     if not receipt:
         raise HTTPException(status_code=404, detail="Receipt not found")
+
+    # ── Self-learning: capture category corrections before overwriting items ──
+    old_items = {
+        i.product_name.lower().strip(): i.category
+        for i in db.query(models.Item).filter(models.Item.receipt_id == receipt_id).all()
+    }
+
     receipt.merchant = data.merchant; receipt.location = data.location
     receipt.date = data.date; receipt.total_amount = data.total_amount
     db.query(models.Item).filter(models.Item.receipt_id == receipt_id).delete()
+
+    learned = 0
     for item in data.items:
         db.add(models.Item(receipt_id=receipt_id,
             product_name=item.product_name, category=item.category, price=item.price))
+
+        # Compare with old category — if user changed it, learn the correction
+        name_lower = item.product_name.lower().strip()
+        old_cat = old_items.get(name_lower)
+        if old_cat and old_cat != item.category:
+            existing = db.query(models.CategoryCorrection).filter(
+                models.CategoryCorrection.product_name_lower == name_lower
+            ).first()
+            if existing:
+                existing.correct_category = item.category
+                existing.correction_count += 1
+                existing.last_updated = datetime.utcnow()
+            else:
+                db.add(models.CategoryCorrection(
+                    product_name_lower=name_lower,
+                    correct_category=item.category
+                ))
+            _CATEGORY_CORRECTIONS[name_lower] = item.category   # update in-memory
+            logger.info(f"Learned correction: '{item.product_name}' → {item.category}")
+            learned += 1
+
     db.commit()
-    logger.info(f"Updated receipt {receipt_id}")
-    return {"status": "success"}
+    logger.info(f"Updated receipt {receipt_id}" + (f", learned {learned} corrections" if learned else ""))
+    return {"status": "success", "corrections_learned": learned}
 
 
 @app.get("/api/dashboard")
@@ -650,6 +706,289 @@ async def get_insights(db: Session = Depends(get_db)):
     ], key=lambda x: x["month"], reverse=True)
 
     return {"by_store": by_store, "by_product": by_product, "by_month": by_month}
+
+
+@app.get("/api/analytics")
+async def get_analytics(db: Session = Depends(get_db)):
+    receipts = db.query(models.Receipt).order_by(models.Receipt.date).all()
+    items    = db.query(models.Item).all()
+
+    if not receipts:
+        return {"status": "no_data", "corrections_learned": len(_CATEGORY_CORRECTIONS)}
+
+    receipt_date_map = {r.id: r.date for r in receipts}
+
+    # ── 1. SPENDING FORECAST ─────────────────────────────────────────────────
+    forecast = None
+    try:
+        now = datetime.now()
+        cur_month = now.strftime("%Y-%m")
+        daily: dict = defaultdict(float)
+        for r in receipts:
+            if r.date and len(r.date) == 10:
+                daily[r.date] += r.total_amount
+
+        month_days = sorted(
+            [(d, v) for d, v in daily.items() if d[:7] == cur_month],
+            key=lambda x: x[0]
+        )
+        if len(month_days) >= 2:
+            # Build cumulative series by calendar day number
+            xs, ys = [], []
+            running = 0.0
+            for d_str, amt in month_days:
+                running += amt
+                xs.append(int(d_str[8:10]))
+                ys.append(running)
+            # Ordinary Least Squares linear regression
+            n = len(xs)
+            sx, sy = sum(xs), sum(ys)
+            sxy = sum(x * y for x, y in zip(xs, ys))
+            sx2 = sum(x * x for x in xs)
+            denom = n * sx2 - sx * sx
+            if denom:
+                slope = (n * sxy - sx * sy) / denom
+                intercept = (sy - slope * sx) / n
+                days_in_month = calendar.monthrange(now.year, now.month)[1]
+                predicted = slope * days_in_month + intercept
+                current_total = ys[-1]
+                forecast = {
+                    "current_total":    round(current_total, 2),
+                    "predicted_total":  round(max(predicted, current_total), 2),
+                    "current_day":      now.day,
+                    "days_in_month":    days_in_month,
+                    "daily_avg":        round(current_total / now.day, 2),
+                    "remaining_days":   days_in_month - now.day,
+                }
+    except Exception as e:
+        logger.warning(f"Forecast error: {e}")
+
+    # ── 2. ANOMALY DETECTION (Z-score per merchant) ───────────────────────────
+    anomalies = []
+    try:
+        merchant_amounts: dict = defaultdict(list)
+        for r in receipts:
+            merchant_amounts[r.merchant].append((r.id, r.total_amount, r.date))
+
+        for merchant, records in merchant_amounts.items():
+            if len(records) < 3:
+                continue
+            amounts = [x[1] for x in records]
+            m = mean(amounts)
+            s = stdev(amounts)
+            if s == 0:
+                continue
+            for rid, amt, dt in records:
+                z = (amt - m) / s
+                if z > 1.9:
+                    anomalies.append({
+                        "receipt_id": rid,
+                        "merchant":   merchant,
+                        "date":       dt,
+                        "amount":     round(amt, 2),
+                        "typical":    round(m, 2),
+                        "z_score":    round(z, 1),
+                        "severity":   "high" if z > 3.0 else "medium",
+                        "pct_above":  round((amt - m) / m * 100, 0),
+                    })
+        anomalies.sort(key=lambda x: x["z_score"], reverse=True)
+    except Exception as e:
+        logger.warning(f"Anomaly error: {e}")
+
+    # ── 3. PRICE INTELLIGENCE ────────────────────────────────────────────────
+    price_trends = []
+    try:
+        price_history: dict = defaultdict(list)
+        for item in items:
+            if not item.product_name or _is_total_line(item.product_name):
+                continue
+            dt = receipt_date_map.get(item.receipt_id)
+            if dt and item.price > 0:
+                price_history[item.product_name].append((dt, item.price))
+
+        for product, history in price_history.items():
+            if len(history) < 2:
+                continue
+            history.sort(key=lambda x: x[0])
+            first_price  = history[0][1]
+            latest_price = history[-1][1]
+            if first_price == 0:
+                continue
+            pct = (latest_price - first_price) / first_price * 100
+            if abs(pct) < 5:   # ignore tiny fluctuations
+                continue
+            price_trends.append({
+                "product":      product,
+                "first_price":  round(first_price, 2),
+                "latest_price": round(latest_price, 2),
+                "pct_change":   round(pct, 1),
+                "first_date":   history[0][0],
+                "latest_date":  history[-1][0],
+                "occurrences":  len(history),
+                "direction":    "up" if pct > 0 else "down",
+            })
+        price_trends.sort(key=lambda x: abs(x["pct_change"]), reverse=True)
+        price_trends = price_trends[:15]
+    except Exception as e:
+        logger.warning(f"Price trend error: {e}")
+
+    # ── 4. RECURRING PATTERN DETECTION ──────────────────────────────────────
+    recurring = []
+    try:
+        merchant_visits: dict = defaultdict(list)
+        for r in receipts:
+            if r.date and r.merchant:
+                merchant_visits[r.merchant].append(r.date)
+
+        today = date_type.today()
+        for merchant, dates in merchant_visits.items():
+            if len(dates) < 3:
+                continue
+            sorted_dates = sorted(dates)
+            gaps = []
+            for i in range(1, len(sorted_dates)):
+                d1 = date_type.fromisoformat(sorted_dates[i - 1])
+                d2 = date_type.fromisoformat(sorted_dates[i])
+                gaps.append((d2 - d1).days)
+            if not gaps:
+                continue
+            avg_gap = mean(gaps)
+            if avg_gap < 2:
+                continue
+            gap_std = stdev(gaps) if len(gaps) >= 2 else 0
+            consistency = 1.0 - min(gap_std / avg_gap, 1.0) if avg_gap > 0 else 0
+
+            if consistency < 0.4 or avg_gap > 120:
+                continue
+
+            last_date  = date_type.fromisoformat(sorted_dates[-1])
+            next_visit = last_date + timedelta(days=round(avg_gap))
+            days_until = (next_visit - today).days
+
+            if   avg_gap <= 9:  pattern = "weekly"
+            elif avg_gap <= 18: pattern = "bi-weekly"
+            elif avg_gap <= 45: pattern = "monthly"
+            else:               pattern = "quarterly"
+
+            recurring.append({
+                "merchant":         merchant,
+                "visit_count":      len(dates),
+                "avg_gap_days":     round(avg_gap, 1),
+                "pattern":          pattern,
+                "last_visit":       sorted_dates[-1],
+                "next_expected":    str(next_visit),
+                "days_until_next":  days_until,
+                "consistency":      round(consistency, 2),
+            })
+        recurring.sort(key=lambda x: x["consistency"], reverse=True)
+    except Exception as e:
+        logger.warning(f"Recurring error: {e}")
+
+    # ── 5. RECEIPT QUALITY CHECK ─────────────────────────────────────────────
+    quality_issues = []
+    try:
+        item_sums: dict = defaultdict(float)
+        for item in items:
+            if not _is_total_line(item.product_name or ""):
+                item_sums[item.receipt_id] += item.price
+
+        for r in receipts:
+            if r.id not in item_sums or not r.total_amount:
+                continue
+            s = item_sums[r.id]
+            diff = abs(s - r.total_amount)
+            pct  = diff / r.total_amount * 100
+            if pct > 10 and diff > 0.5:
+                quality_issues.append({
+                    "receipt_id":  r.id,
+                    "merchant":    r.merchant,
+                    "date":        r.date,
+                    "total":       round(r.total_amount, 2),
+                    "items_sum":   round(s, 2),
+                    "gap":         round(diff, 2),
+                    "pct_off":     round(pct, 1),
+                })
+        quality_issues.sort(key=lambda x: x["pct_off"], reverse=True)
+    except Exception as e:
+        logger.warning(f"Quality check error: {e}")
+
+    # ── 6. CATEGORY MOMENTUM ─────────────────────────────────────────────────
+    category_momentum = []
+    try:
+        now = datetime.now()
+        cur_m = now.strftime("%Y-%m")
+        prev_months = []
+        y, mo = now.year, now.month
+        for _ in range(3):
+            mo -= 1
+            if mo == 0: mo = 12; y -= 1
+            prev_months.append(f"{y}-{str(mo).zfill(2)}")
+
+        receipt_month = {r.id: r.date[:7] for r in receipts if r.date and len(r.date) >= 7}
+        cat_monthly: dict = defaultdict(lambda: defaultdict(float))
+        for item in items:
+            month = receipt_month.get(item.receipt_id)
+            if month:
+                cat_monthly[item.category][month] += item.price
+
+        for cat, monthly in cat_monthly.items():
+            cur_val  = monthly.get(cur_m, 0)
+            prev_vals = [monthly.get(m, 0) for m in prev_months]
+            prev_avg = mean(prev_vals) if any(v > 0 for v in prev_vals) else 0
+            if cur_val == 0 and prev_avg == 0:
+                continue
+            momentum = ((cur_val - prev_avg) / prev_avg * 100) if prev_avg > 0 else (100 if cur_val > 0 else 0)
+            category_momentum.append({
+                "category":  cat,
+                "current":   round(cur_val, 2),
+                "prev_avg":  round(prev_avg, 2),
+                "momentum":  round(momentum, 1),
+                "trend":     "rising" if momentum > 15 else "falling" if momentum < -15 else "stable",
+            })
+        category_momentum.sort(key=lambda x: abs(x["momentum"]), reverse=True)
+    except Exception as e:
+        logger.warning(f"Momentum error: {e}")
+
+    # ── 7. MERCHANT CHAINS (simple prefix grouping) ──────────────────────────
+    chains = []
+    try:
+        merchant_totals: dict = defaultdict(lambda: {"total": 0.0, "visits": 0, "merchants": set()})
+        for r in receipts:
+            if not r.merchant:
+                continue
+            # Extract first word as chain key (e.g. "Kaufland Berlin" → "Kaufland")
+            chain_key = r.merchant.split()[0].rstrip(',:;')
+            merchant_totals[chain_key]["total"]    += r.total_amount
+            merchant_totals[chain_key]["visits"]   += 1
+            merchant_totals[chain_key]["merchants"].add(r.merchant)
+
+        for chain, d in merchant_totals.items():
+            if len(d["merchants"]) > 1:   # only show if multiple branches detected
+                chains.append({
+                    "chain":     chain,
+                    "branches":  list(d["merchants"]),
+                    "total":     round(d["total"], 2),
+                    "visits":    d["visits"],
+                })
+        chains.sort(key=lambda x: x["total"], reverse=True)
+    except Exception as e:
+        logger.warning(f"Chain error: {e}")
+
+    return {
+        "status":               "ok",
+        "forecast":             forecast,
+        "anomalies":            anomalies,
+        "price_trends":         price_trends,
+        "recurring":            recurring,
+        "quality_issues":       quality_issues,
+        "category_momentum":    category_momentum,
+        "chains":               chains,
+        "corrections_learned":  len(_CATEGORY_CORRECTIONS),
+        "corrections":          [
+            {"product": k, "category": v}
+            for k, v in sorted(_CATEGORY_CORRECTIONS.items())
+        ],
+    }
 
 
 @app.post("/api/reset")
