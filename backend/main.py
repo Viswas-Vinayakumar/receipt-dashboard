@@ -3,6 +3,7 @@ import re
 import base64
 import shutil
 import json
+import io
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -78,73 +79,216 @@ class EditReceiptIn(BaseModel):
     items: List[ReceiptItem] = []
 
 # ── Prompt ─────────────────────────────────────────────────────────────────
-PROMPT = """Analyze this image and determine if it is a receipt (retail, grocery, restaurant, pharmacy, transport, etc.).
+VALID_CATEGORIES = {
+    "Groceries", "Bakery", "Beverages", "Electronics", "Dining",
+    "Transport", "Health", "Accommodation", "Deposit", "Others"
+}
 
-If it is NOT a receipt (e.g. a selfie, landscape, screenshot, document, or unrelated photo):
-Return ONLY valid JSON: {"is_receipt": false}
+PROMPT = """You are an expert receipt and bill parser. The image may be a supermarket receipt, restaurant bill, hotel invoice, pharmacy receipt, transport ticket, or any similar financial document. It may be rotated, at an angle, blurry, or partially cut off — do your best regardless.
 
-If it IS a receipt, extract all fields accurately.
+STEP 1 — Is this a receipt/bill/invoice?
+If NO (selfie, landscape photo, food photo, random document):
+Return ONLY: {"is_receipt": false}
 
-Rules:
-1. merchant: The COMPLETE store name as printed in the header, including branch or city suffix (e.g. "Rewe Hauptbahnhof" or "Kaufland Berlin-Heinersdorf").
-2. location: Full street address of the store.
-3. date: Convert any date format to strict ISO 8601 — YYYY-MM-DD only (e.g. "18.05.2026" → "2026-05-18"). For two-digit years, always assume the 21st century (e.g. "21.05.26" → "2026-05-21", "16.05.26" → "2026-05-16"). Ignore spaces within dates (e.g. "16 . 05 . 20 26" → "2026-05-16"). We are currently in 2026 so any ambiguous recent year should resolve to 2026.
-4. total_amount: The final amount paid (Summe / Gesamtbetrag / Total / Betrag) as a decimal number. Do NOT include tax breakdown lines.
-5. items: Only individual product line items with their listed price. Exclude payment info, TSE data, tax rows, and subtotals.
+STEP 2 — If YES, extract every field carefully:
 
-The receipt may be in German or English. Translate product names to English.
-Each item's category must be exactly one of: Groceries, Bakery, Beverages, Electronics, Dining, Transport, Health, Deposit, Others.
+FIELD RULES:
 
-Return ONLY a valid JSON object — no markdown, no explanation, no code fences:
-{
-  "is_receipt": true,
-  "merchant": "string",
-  "location": "string",
-  "date": "YYYY-MM-DD",
-  "total_amount": number,
-  "items": [{"product_name": "string", "category": "string", "price": number}]
-}"""
+merchant: Full business name exactly as printed. Include branch/location suffix.
+  Hotels → full hotel brand + property (e.g. "Hilton Berlin Gendarmenmarkt")
+  Supermarkets → include branch (e.g. "Rewe Hauptbahnhof", "Kaufland Berlin-Heinersdorf")
+  Never abbreviate.
+
+location: Full street address of the business. Empty string "" if not visible.
+
+date: Convert ANY date format → strict YYYY-MM-DD.
+  "18.05.2026" → "2026-05-18"   |   "18/05/26" → "2026-05-18"
+  "21.05.26" → "2026-05-21"     |   "16 . 05 . 20 26" → "2026-05-16"
+  "May 18, 2026" → "2026-05-18" |   "26/05/21" → "2026-05-21"
+  Two-digit years: always 21st century. Current year is 2026.
+  Multiple dates: use PAYMENT/CHECKOUT date, not check-in or order date.
+  If no date found: use "2026-05-25".
+
+total_amount: The FINAL amount the customer paid. Numbers only, no symbols.
+  Look for: Total / Summe / Gesamtbetrag / Betrag / Grand Total / Amount Due / Zu zahlen / To Pay / Balance Due
+  Hotels: use grand total / final invoice amount — NOT a nightly rate
+  Comma decimals: "12,50" → 12.5    |    "1.234,50" → 1234.5
+  Strip currency: "€45.00" → 45.0   |    "£12.99" → 12.99
+  Ignore: tax breakdown subtotals, deposits listed separately, individual night rates
+
+items: Each individual product/service line (not payment lines, tax summaries, or totals).
+  product_name: Translate to English if in German/French/other language.
+    Abbreviations: expand if obvious (e.g. "Bio Vollmilch 3.5%" → "Organic Whole Milk 3.5%")
+  price: The line item price as a number. No currency symbols.
+  category: EXACTLY one of these values (case-sensitive):
+    Groceries     → supermarket products, food items, packaged goods
+    Bakery        → bread, pastries, cakes from bakeries
+    Beverages     → drinks, coffee, tea, juice, alcohol
+    Electronics   → tech, gadgets, cables, batteries
+    Dining        → restaurant meals, café orders, takeaway, room service food
+    Transport     → taxi, train, bus, parking, fuel, toll
+    Health        → pharmacy, medicine, personal care, gym
+    Accommodation → hotel room charges, lodging, resort fees, minibar, spa
+    Deposit       → Pfand / bottle deposits / returnable packaging
+    Others        → anything that doesn't fit the above
+
+Return ONLY a valid JSON object — zero markdown, zero explanation, zero code fences:
+{"is_receipt":true,"merchant":"string","location":"string","date":"YYYY-MM-DD","total_amount":number,"items":[{"product_name":"string","category":"string","price":number}]}"""
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 def _extract_json(text: str) -> dict:
-    """Strip markdown fences and parse JSON from model response."""
+    """Strip markdown fences and parse the first complete JSON object found."""
     text = re.sub(r'```(?:json)?\s*', '', text).strip().rstrip('`').strip()
-    start = text.find('{')
-    end   = text.rfind('}') + 1
-    if start >= 0 and end > start:
-        return json.loads(text[start:end])
+    # Find outermost { }
+    depth, start_idx = 0, -1
+    for i, ch in enumerate(text):
+        if ch == '{':
+            if depth == 0:
+                start_idx = i
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0 and start_idx >= 0:
+                return json.loads(text[start_idx:i + 1])
     raise ValueError(f"No JSON object found in response: {text[:300]}")
 
 
+def _fix_number(val) -> float:
+    """Coerce a value that may be a string like '€12,50' or '1.234,50' to float."""
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip()
+    s = re.sub(r'[€£$¥₹\s]', '', s)      # strip currency symbols
+    # European format: 1.234,50 → 1234.50
+    if re.search(r'\d{1,3}(\.\d{3})+(,\d+)?$', s):
+        s = s.replace('.', '').replace(',', '.')
+    else:
+        s = s.replace(',', '.')
+    try:
+        return float(re.sub(r'[^\d.]', '', s))
+    except Exception:
+        return 0.0
+
+
+def _validate_and_fix(data: dict) -> dict:
+    """Post-process AI output: fix types, normalize categories, sanitise fields."""
+    if not data.get("is_receipt", True):
+        return data
+
+    # total_amount
+    data["total_amount"] = _fix_number(data.get("total_amount", 0))
+
+    # date — ensure YYYY-MM-DD
+    raw_date = str(data.get("date", "")).strip()
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', raw_date):
+        # Try common transforms before giving up
+        m = re.search(r'(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})', raw_date)
+        if m:
+            d, mo, y = m.group(1), m.group(2), m.group(3)
+            y = f"20{y}" if len(y) == 2 else y
+            data["date"] = f"{y}-{mo.zfill(2)}-{d.zfill(2)}"
+        else:
+            data["date"] = datetime.today().strftime("%Y-%m-%d")
+            logger.warning(f"Could not parse date '{raw_date}', defaulting to today")
+
+    # items
+    clean_items = []
+    for item in data.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        item["price"] = _fix_number(item.get("price", 0))
+        if item.get("category") not in VALID_CATEGORIES:
+            item["category"] = "Others"
+        if item.get("product_name", "").strip():
+            clean_items.append(item)
+    data["items"] = clean_items
+
+    return data
+
+
+def preprocess_image(image_data: bytes) -> bytes:
+    """Auto-rotate via EXIF, resize to max 1920px, convert to JPEG for speed + accuracy."""
+    try:
+        from PIL import Image, ExifTags
+        img = Image.open(io.BytesIO(image_data))
+
+        # Auto-rotate based on EXIF orientation (phone photos)
+        try:
+            exif_raw = img.getexif()
+            orientation_tag = next(
+                (k for k, v in ExifTags.TAGS.items() if v == "Orientation"), None
+            )
+            if orientation_tag and exif_raw:
+                orientation = exif_raw.get(orientation_tag, 1)
+                rotations = {3: 180, 6: 270, 8: 90}
+                if orientation in rotations:
+                    img = img.rotate(rotations[orientation], expand=True)
+                    logger.info(f"Auto-rotated image ({orientation} → {rotations[orientation]}°)")
+        except Exception as e:
+            logger.debug(f"EXIF rotation skipped: {e}")
+
+        # Resize: cap longest edge at 1920px (halves inference time for large photos)
+        MAX_DIM = 1920
+        w, h = img.size
+        if max(w, h) > MAX_DIM:
+            scale = MAX_DIM / max(w, h)
+            img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+            logger.info(f"Resized {w}×{h} → {img.size[0]}×{img.size[1]}")
+
+        # Normalise to RGB JPEG
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        return buf.getvalue()
+
+    except Exception as e:
+        logger.warning(f"Image preprocessing failed ({e}), using original")
+        return image_data
+
+
 def call_ollama(image_data: bytes) -> dict:
-    """Send image to local Ollama gemma4:e4b and return parsed JSON dict."""
-    image_b64 = base64.b64encode(image_data).decode()
+    """Pre-process image, call Ollama, validate result. Retries once on parse error."""
+    image_data = preprocess_image(image_data)
+    image_b64  = base64.b64encode(image_data).decode()
+
     payload = {
         "model":  OLLAMA_MODEL,
         "prompt": PROMPT,
         "images": [image_b64],
         "stream": False,
         "format": "json",
-        "options": {"temperature": 0.1, "num_predict": 1024},
+        "options": {"temperature": 0, "num_predict": 2048},
     }
-    try:
-        with httpx.Client(timeout=180.0) as client:
-            resp = client.post(f"{OLLAMA_URL}/api/generate", json=payload)
-    except httpx.ConnectError:
-        raise HTTPException(status_code=503,
-            detail="Ollama is not running. Start it with: ollama serve")
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504,
-            detail="Ollama timed out — image may be too large")
 
-    if resp.status_code != 200:
-        raise HTTPException(status_code=500,
-            detail=f"Ollama error {resp.status_code}: {resp.text[:300]}")
+    for attempt in range(2):
+        try:
+            with httpx.Client(timeout=200.0) as client:
+                resp = client.post(f"{OLLAMA_URL}/api/generate", json=payload)
+        except httpx.ConnectError:
+            raise HTTPException(status_code=503,
+                detail="Ollama is not running. Start it with: ollama serve")
+        except httpx.TimeoutException:
+            raise HTTPException(status_code=504,
+                detail="Ollama timed out — image may be too large or model is loading")
 
-    response_text = resp.json().get("response", "")
-    logger.info(f"Ollama raw: {response_text[:400]}")
-    return _extract_json(response_text)
+        if resp.status_code != 200:
+            raise HTTPException(status_code=500,
+                detail=f"Ollama error {resp.status_code}: {resp.text[:300]}")
+
+        response_text = resp.json().get("response", "")
+        logger.info(f"Ollama raw (attempt {attempt+1}): {response_text[:500]}")
+
+        try:
+            raw = _extract_json(response_text)
+            return _validate_and_fix(raw)
+        except Exception as e:
+            logger.warning(f"Parse failed attempt {attempt+1}: {e}")
+            if attempt == 1:
+                raise ValueError(f"Could not parse Ollama response after 2 attempts: {e}")
+
+    raise ValueError("Unexpected exit from call_ollama")
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────

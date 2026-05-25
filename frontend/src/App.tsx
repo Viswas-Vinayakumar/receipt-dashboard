@@ -43,18 +43,19 @@ type UploadMode  = 'scan' | 'manual'
 type InsightTab  = 'store' | 'product' | 'month'
 
 // ── Constants ──────────────────────────────────────────────────────────────
-const CATEGORIES = ['Groceries','Bakery','Beverages','Electronics','Dining','Transport','Health','Deposit','Others']
+const CATEGORIES = ['Groceries','Bakery','Beverages','Electronics','Dining','Transport','Health','Accommodation','Deposit','Others']
 
 const CATEGORY_COLORS: Record<string, string> = {
-  Groceries:   '#34d399',
-  Bakery:      '#fb923c',
-  Beverages:   '#60a5fa',
-  Electronics: '#a78bfa',
-  Dining:      '#f472b6',
-  Transport:   '#38bdf8',
-  Health:      '#f87171',
-  Deposit:     '#94a3b8',
-  Others:      '#fbbf24',
+  Groceries:     '#34d399',
+  Bakery:        '#fb923c',
+  Beverages:     '#60a5fa',
+  Electronics:   '#a78bfa',
+  Dining:        '#f472b6',
+  Transport:     '#38bdf8',
+  Health:        '#f87171',
+  Accommodation: '#818cf8',
+  Deposit:       '#94a3b8',
+  Others:        '#fbbf24',
 }
 
 const catColor = (name: string) => CATEGORY_COLORS[name] ?? '#94a3b8'
