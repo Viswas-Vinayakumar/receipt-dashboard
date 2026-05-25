@@ -62,6 +62,27 @@ try:
 except Exception as e:
     logger.warning(f"Migration warning: {e}")
 
+# ── Backfill image_hash for existing receipts ──────────────────────────────
+try:
+    from database import SessionLocal
+    _db = SessionLocal()
+    _missing = _db.query(models.Receipt).filter(models.Receipt.image_hash == None).all()
+    _updated = 0
+    for _r in _missing:
+        if _r.image_path and os.path.exists(_r.image_path):
+            try:
+                with open(_r.image_path, "rb") as _f:
+                    _r.image_hash = hashlib.sha256(_f.read()).hexdigest()
+                _updated += 1
+            except Exception:
+                pass
+    if _updated:
+        _db.commit()
+        logger.info(f"Backfilled image_hash for {_updated} existing receipts")
+    _db.close()
+except Exception as _e:
+    logger.warning(f"Hash backfill warning: {_e}")
+
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
@@ -123,56 +144,23 @@ def _is_total_line(name: str) -> bool:
     lower = name.lower().strip()
     return lower in _ITEM_BLACKLIST or lower.startswith(_TOTAL_PREFIXES)
 
-PROMPT = """You are an expert receipt and bill parser. The image may be a supermarket receipt, restaurant bill, hotel invoice, pharmacy receipt, transport ticket, or any similar financial document. It may be rotated, at an angle, blurry, or partially cut off — do your best regardless.
+PROMPT = """You are a receipt parser. Output ONLY a single JSON object, no markdown, no explanation.
 
-STEP 1 — Is this a receipt/bill/invoice?
-If NO (selfie, landscape photo, food photo, random document):
-Return ONLY: {"is_receipt": false}
+NOT a receipt (selfie, landscape, food photo, screenshot): {"is_receipt":false}
 
-STEP 2 — If YES, extract every field carefully:
+For a receipt/bill/invoice extract these fields:
 
-FIELD RULES:
+merchant: Exact business name as printed, including branch (e.g. "Kaufland Berlin-Heinersdorf"). Never shorten.
+location: Street address or "" if absent.
+date: YYYY-MM-DD format. Examples: "18.05.2026"→"2026-05-18", "21.05.26"→"2026-05-21", "16 . 05 . 2026"→"2026-05-16". Two-digit year = 21st century. Use payment/checkout date. If unknown: "2026-05-25".
+total_amount: FINAL amount paid as a number (no symbols). Use the LAST/LARGEST "Total"/"Summe"/"Gesamtbetrag"/"Zu zahlen"/"Grand Total" line. European decimals: "12,50"→12.5, "1.234,50"→1234.5. Do NOT use subtotals, tax lines, or deposit amounts.
+items: Individual purchased items ONLY. EXCLUDE: any line containing Summe/Total/Gesamt/MwSt/USt/Tax/VAT/Pfand/Deposit/Rabatt/Discount/Subtotal/Zwischensumme or that is clearly a payment/change/rounding line.
+  product_name: Translate German/French to English. Expand abbreviations.
+  price: Line item price as number.
+  category: One of exactly: Groceries, Bakery, Beverages, Electronics, Dining, Transport, Health, Accommodation, Deposit, Others
 
-merchant: Full business name exactly as printed. Include branch/location suffix.
-  Hotels → full hotel brand + property (e.g. "Hilton Berlin Gendarmenmarkt")
-  Supermarkets → include branch (e.g. "Rewe Hauptbahnhof", "Kaufland Berlin-Heinersdorf")
-  Never abbreviate.
-
-location: Full street address of the business. Empty string "" if not visible.
-
-date: Convert ANY date format → strict YYYY-MM-DD.
-  "18.05.2026" → "2026-05-18"   |   "18/05/26" → "2026-05-18"
-  "21.05.26" → "2026-05-21"     |   "16 . 05 . 20 26" → "2026-05-16"
-  "May 18, 2026" → "2026-05-18" |   "26/05/21" → "2026-05-21"
-  Two-digit years: always 21st century. Current year is 2026.
-  Multiple dates: use PAYMENT/CHECKOUT date, not check-in or order date.
-  If no date found: use "2026-05-25".
-
-total_amount: The FINAL amount the customer paid. Numbers only, no symbols.
-  Look for: Total / Summe / Gesamtbetrag / Betrag / Grand Total / Amount Due / Zu zahlen / To Pay / Balance Due
-  Hotels: use grand total / final invoice amount — NOT a nightly rate
-  Comma decimals: "12,50" → 12.5    |    "1.234,50" → 1234.5
-  Strip currency: "€45.00" → 45.0   |    "£12.99" → 12.99
-  Ignore: tax breakdown subtotals, deposits listed separately, individual night rates
-
-items: Each individual product/service line (not payment lines, tax summaries, or totals).
-  product_name: Translate to English if in German/French/other language.
-    Abbreviations: expand if obvious (e.g. "Bio Vollmilch 3.5%" → "Organic Whole Milk 3.5%")
-  price: The line item price as a number. No currency symbols.
-  category: EXACTLY one of these values (case-sensitive):
-    Groceries     → supermarket products, food items, packaged goods
-    Bakery        → bread, pastries, cakes from bakeries
-    Beverages     → drinks, coffee, tea, juice, alcohol
-    Electronics   → tech, gadgets, cables, batteries
-    Dining        → restaurant meals, café orders, takeaway, room service food
-    Transport     → taxi, train, bus, parking, fuel, toll
-    Health        → pharmacy, medicine, personal care, gym
-    Accommodation → hotel room charges, lodging, resort fees, minibar, spa
-    Deposit       → Pfand / bottle deposits / returnable packaging
-    Others        → anything that doesn't fit the above
-
-Return ONLY a valid JSON object — zero markdown, zero explanation, zero code fences:
-{"is_receipt":true,"merchant":"string","location":"string","date":"YYYY-MM-DD","total_amount":number,"items":[{"product_name":"string","category":"string","price":number}]}"""
+Output format (no deviations):
+{"is_receipt":true,"merchant":"...","location":"...","date":"YYYY-MM-DD","total_amount":0.0,"items":[{"product_name":"...","category":"...","price":0.0}]}"""
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -268,19 +256,26 @@ def preprocess_image(image_data: bytes) -> bytes:
         except Exception as e:
             logger.debug(f"EXIF rotation skipped: {e}")
 
-        # Resize: cap longest edge at 1280px (faster inference, still plenty of detail)
-        MAX_DIM = 1280
+        # Resize: cap longest edge at 1024px — enough for OCR, ~36% less data than 1280
+        MAX_DIM = 1024
         w, h = img.size
         if max(w, h) > MAX_DIM:
             scale = MAX_DIM / max(w, h)
             img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
             logger.info(f"Resized {w}×{h} → {img.size[0]}×{img.size[1]}")
 
+        # Sharpen slightly to improve OCR on resized images
+        try:
+            from PIL import ImageFilter
+            img = img.filter(ImageFilter.UnsharpMask(radius=0.6, percent=120, threshold=2))
+        except Exception:
+            pass
+
         # Normalise to RGB JPEG
         if img.mode not in ("RGB", "L"):
             img = img.convert("RGB")
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=85, optimize=True)
+        img.save(buf, format="JPEG", quality=82, optimize=True)
         return buf.getvalue()
 
     except Exception as e:
@@ -299,7 +294,7 @@ def call_ollama(image_data: bytes) -> dict:
         "images": [image_b64],
         "stream": False,
         "format": "json",
-        "options": {"temperature": 0, "num_predict": 1400},
+        "options": {"temperature": 0, "num_predict": 800, "num_ctx": 4096},
     }
 
     for attempt in range(2):

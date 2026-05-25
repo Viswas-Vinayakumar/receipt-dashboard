@@ -366,12 +366,13 @@ function App() {
     return () => { cancelled = true; started = false }
   }, [])
 
-  // ── Parse backend error ──────────────────────────────────────────────────
-  const parseErrDetail = async (res: Response): Promise<{ msg: string; status: number }> => {
-    const raw = await res.text().catch(() => res.statusText)
-    let msg = raw
-    try { const p = JSON.parse(raw); msg = p.detail ?? p.message ?? raw } catch {}
-    return { msg, status: res.status }
+  // ── Parse backend response (reads body once, returns for both success and error) ──
+  const parseResponse = async (res: Response): Promise<{ msg: string; status: number; json: any }> => {
+    const raw = await res.text().catch(() => '')
+    let parsed: any = null
+    try { parsed = JSON.parse(raw) } catch {}
+    const msg = parsed?.detail ?? parsed?.message ?? raw ?? res.statusText
+    return { msg, status: res.status, json: parsed }
   }
 
   // ── AI Upload ────────────────────────────────────────────────────────────
@@ -391,8 +392,9 @@ function App() {
           const form = new FormData()
           form.append('file', new Blob([buf], { type: file.type || 'image/jpeg' }), file.name)
           const res = await tauriFetch('http://127.0.0.1:8888/api/upload', { method: 'POST', body: form })
+          const { msg, status, json: respJson } = await parseResponse(res)
+
           if (!res.ok) {
-            const { msg, status } = await parseErrDetail(res)
             if (status === 400 && msg === 'not_a_receipt') {
               setUploadErr({
                 msg: "This image doesn't look like a receipt. Try a clearer photo, or enter the details manually.",
@@ -400,9 +402,9 @@ function App() {
               })
               errs.push('not_a_receipt')
             } else if (status === 409) {
-              // Exact duplicate
-              try {
-                const dup = JSON.parse(msg)
+              // Exact image duplicate — blocked before AI scan
+              const dup = respJson ? (typeof respJson.detail === 'string' ? JSON.parse(respJson.detail) : respJson.detail) : null
+              if (dup) {
                 const dateStr = dup.date ? new Date(dup.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''
                 setUploadErr({
                   msg: `Already uploaded — ${dup.merchant}${dateStr ? `, ${dateStr}` : ''} (€${(dup.amount as number).toFixed(2)})`,
@@ -410,12 +412,11 @@ function App() {
                   isDuplicate: true,
                   dupInfo: { merchant: dup.merchant, date: dup.date, amount: dup.amount, existing_id: dup.existing_id }
                 })
-              } catch {
+              } else {
                 setUploadErr({ msg: 'This receipt was already uploaded.', isNotReceipt: false, isDuplicate: true })
               }
               errs.push('duplicate')
             } else if (status === 429) {
-              // Backend returns "rate_limit:<seconds>" — parse it
               const m = msg.match(/rate_limit:(\d+)/)
               const wait = m ? parseInt(m[1]) : 62
               setLoading(false); setUploadStatus('')
@@ -429,21 +430,17 @@ function App() {
             }
           } else {
             ok++
-            // Check for possible semantic duplicate warning
-            try {
-              const respText = await res.text()
-              const respJson = JSON.parse(respText)
-              if (respJson.warning === 'possible_duplicate' && respJson.existing) {
-                const e = respJson.existing
-                const dateStr = e.date ? new Date(e.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''
-                setUploadErr({
-                  msg: `Possible duplicate — a ${e.merchant}${dateStr ? ` receipt from ${dateStr}` : ' receipt'} for €${(e.amount as number).toFixed(2)} already exists.`,
-                  isNotReceipt: false,
-                  isDuplicate: true,
-                  dupInfo: { merchant: e.merchant, date: e.date, amount: e.amount, existing_id: e.id }
-                })
-              }
-            } catch { /* response already consumed or not JSON */ }
+            // Check for possible semantic duplicate warning (same merchant+date+amount)
+            if (respJson?.warning === 'possible_duplicate' && respJson?.existing) {
+              const e = respJson.existing
+              const dateStr = e.date ? new Date(e.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''
+              setUploadErr({
+                msg: `Possible duplicate — a ${e.merchant}${dateStr ? ` receipt from ${dateStr}` : ' receipt'} for €${(e.amount as number).toFixed(2)} already exists.`,
+                isNotReceipt: false,
+                isDuplicate: true,
+                dupInfo: { merchant: e.merchant, date: e.date, amount: e.amount, existing_id: e.id }
+              })
+            }
           }
         } catch (err) {
           errs.push(err instanceof Error ? err.message : `${file.name}: upload failed`)
