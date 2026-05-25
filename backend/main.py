@@ -413,9 +413,12 @@ async def get_dashboard_data(db: Session = Depends(get_db)):
         rc = receipt_categories.setdefault(item.receipt_id, {})
         rc[item.category] = rc.get(item.category, 0.0) + item.price
 
+    daily: dict = defaultdict(float)
     for r in receipts:
         if r.date and len(r.date) >= 7:
             monthly[r.date[:7]] += r.total_amount
+        if r.date and len(r.date) == 10:
+            daily[r.date] += r.total_amount
 
     top_cat = max(category_data, key=lambda c: category_data[c]["amount"]) if category_data else "N/A"
 
@@ -433,6 +436,9 @@ async def get_dashboard_data(db: Session = Depends(get_db)):
         "monthly_trend": sorted([
             {"month": k, "total": round(v, 2)} for k, v in monthly.items()],
             key=lambda x: x["month"]),
+        "daily_trend": sorted([
+            {"date": k, "total": round(v, 2)} for k, v in daily.items()],
+            key=lambda x: x["date"]),
         "recent_receipts": [
             {"id": r.id, "merchant": r.merchant, "date": r.date,
              "total_amount": r.total_amount, "category": top_cat_for(r.id)}
@@ -489,6 +495,8 @@ async def get_insights(db: Session = Depends(get_db)):
     product_data: dict = {}
     for item in items:
         name = item.product_name
+        if not name or _is_total_line(name):
+            continue
         if name not in product_data:
             product_data[name] = {"total": 0.0, "count": 0}
         product_data[name]["total"] += item.price
@@ -505,6 +513,8 @@ async def get_insights(db: Session = Depends(get_db)):
     receipt_month: dict = {r.id: r.date[:7] for r in receipts if r.date and len(r.date) >= 7}
 
     for item in items:
+        if not item.product_name or _is_total_line(item.product_name):
+            continue
         month = receipt_month.get(item.receipt_id)
         if month:
             month_product[month][item.product_name] += item.price

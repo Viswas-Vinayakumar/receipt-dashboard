@@ -15,6 +15,7 @@ interface DashboardData {
   top_category: string
   category_spend: { name: string; value: number; count: number }[]
   monthly_trend:  { month: string; total: number }[]
+  daily_trend:    { date: string; total: number }[]
   recent_receipts: { id: number; merchant: string; date: string; total_amount: number; category: string }[]
 }
 
@@ -65,6 +66,12 @@ const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct'
 const formatMonth = (m: string) => {
   const [y, mo] = m.split('-')
   return `${MONTH_NAMES[parseInt(mo) - 1]} ${y}`
+}
+
+const formatDay = (d: string) => {
+  // d = "2026-05-21" → "May 21"
+  const [, mo, dd] = d.split('-')
+  return `${MONTH_NAMES[parseInt(mo) - 1]} ${parseInt(dd)}`
 }
 
 const emptyManualItem = (): ManualItem => ({ product_name: '', category: 'Groceries', price: '' })
@@ -737,7 +744,7 @@ function App() {
       {hasChart && (
         <section className="card chart-card" style={{ animationDelay: '0.25s' }}>
           <div className="chart-header">
-            <h3>{chartTab === 'category' ? 'Spending by Category' : 'Monthly Spending'}</h3>
+            <h3>{chartTab === 'category' ? 'Spending by Category' : (data && data.monthly_trend.length <= 1 && (data.daily_trend?.length ?? 0) > 0 ? 'Daily Spending' : 'Monthly Spending')}</h3>
             <div className="chart-tabs">
               <button
                 className={`chart-tab${chartTab === 'category' ? ' active' : ''}`}
@@ -746,8 +753,8 @@ function App() {
               <button
                 className={`chart-tab${chartTab === 'monthly' ? ' active' : ''}`}
                 onClick={() => setChartTab('monthly')}
-                disabled={!data?.monthly_trend.length}
-              >Monthly</button>
+                disabled={!data?.monthly_trend.length && !data?.daily_trend?.length}
+              >{data && data.monthly_trend.length <= 1 && (data.daily_trend?.length ?? 0) > 0 ? 'Daily' : 'Monthly'}</button>
             </div>
           </div>
 
@@ -794,27 +801,50 @@ function App() {
             )
           })()}
 
-          {chartTab === 'monthly' && data && data.monthly_trend.length > 0 && (
-            <>
-              <p className="chart-subtitle">
-                {data.monthly_trend.length} month{data.monthly_trend.length !== 1 ? 's' : ''} · €{data.monthly_trend.reduce((s, m) => s + m.total, 0).toFixed(2)} total
-              </p>
-              <ResponsiveContainer width="100%" height={220}>
-                <LineChart data={data.monthly_trend.map(m => ({ ...m, label: formatMonth(m.month) }))} margin={{ top: 8, right: 24, left: 0, bottom: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)'} />
-                  <XAxis dataKey="label" tick={{ fontSize: 12, fill: darkMode ? '#a0a0ab' : '#86868b' }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 12, fill: darkMode ? '#a0a0ab' : '#86868b' }} axisLine={false} tickLine={false} tickFormatter={v => `€${v}`} width={52} />
-                  <Tooltip content={<MonthlyTooltip />} cursor={{ stroke: darkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', strokeWidth: 2 }} />
-                  <Line
-                    type="monotone" dataKey="total" stroke="#3b82f6" strokeWidth={2.5}
-                    dot={{ fill: '#3b82f6', r: 4, strokeWidth: 0 }}
-                    activeDot={{ r: 6, fill: '#3b82f6', strokeWidth: 0 }}
-                    isAnimationActive animationDuration={900}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </>
-          )}
+          {chartTab === 'monthly' && data && (data.monthly_trend.length > 0 || data.daily_trend?.length > 0) && (() => {
+            const useDaily = data.monthly_trend.length <= 1 && (data.daily_trend?.length ?? 0) > 0
+            const totalSpend = useDaily
+              ? data.daily_trend.reduce((s, d) => s + d.total, 0)
+              : data.monthly_trend.reduce((s, m) => s + m.total, 0)
+            return (
+              <>
+                <p className="chart-subtitle">
+                  {useDaily
+                    ? `${data.daily_trend.length} day${data.daily_trend.length !== 1 ? 's' : ''} · €${totalSpend.toFixed(2)} total`
+                    : `${data.monthly_trend.length} month${data.monthly_trend.length !== 1 ? 's' : ''} · €${totalSpend.toFixed(2)} total`
+                  }
+                </p>
+                <ResponsiveContainer width="100%" height={220}>
+                  {useDaily ? (
+                    <BarChart data={data.daily_trend.map(d => ({ ...d, label: formatDay(d.date) }))} margin={{ top: 8, right: 24, left: 0, bottom: 8 }} barCategoryGap="32%">
+                      <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)'} vertical={false} />
+                      <XAxis dataKey="label" tick={{ fontSize: 11, fill: darkMode ? '#a0a0ab' : '#86868b' }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize: 12, fill: darkMode ? '#a0a0ab' : '#86868b' }} axisLine={false} tickLine={false} tickFormatter={v => `€${v}`} width={52} />
+                      <Tooltip content={<MonthlyTooltip />} cursor={{ fill: darkMode ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)' }} />
+                      <Bar dataKey="total" radius={[6, 6, 0, 0]} isAnimationActive animationDuration={900}>
+                        {data.daily_trend.map((_, i) => (
+                          <Cell key={i} fill={darkMode ? '#3b82f6' : '#2563eb'} fillOpacity={0.85} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  ) : (
+                    <LineChart data={data.monthly_trend.map(m => ({ ...m, label: formatMonth(m.month) }))} margin={{ top: 8, right: 24, left: 0, bottom: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)'} />
+                      <XAxis dataKey="label" tick={{ fontSize: 12, fill: darkMode ? '#a0a0ab' : '#86868b' }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize: 12, fill: darkMode ? '#a0a0ab' : '#86868b' }} axisLine={false} tickLine={false} tickFormatter={v => `€${v}`} width={52} />
+                      <Tooltip content={<MonthlyTooltip />} cursor={{ stroke: darkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', strokeWidth: 2 }} />
+                      <Line
+                        type="monotone" dataKey="total" stroke="#3b82f6" strokeWidth={2.5}
+                        dot={{ fill: '#3b82f6', r: 4, strokeWidth: 0 }}
+                        activeDot={{ r: 6, fill: '#3b82f6', strokeWidth: 0 }}
+                        isAnimationActive animationDuration={900}
+                      />
+                    </LineChart>
+                  )}
+                </ResponsiveContainer>
+              </>
+            )
+          })()}
         </section>
       )}
 
