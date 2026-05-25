@@ -129,6 +129,20 @@ function App() {
   const [insightTab, setInsightTab]           = useState<InsightTab>('store')
   const [expandedMonths, setExpandedMonths]   = useState<Set<string>>(new Set())
 
+  // ── Dark mode ─────────────────────────────────────────────────────────────
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('darkMode') === 'true')
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', darkMode)
+    localStorage.setItem('darkMode', String(darkMode))
+  }, [darkMode])
+
+  // ── AI badge (fades in then disappears) ──────────────────────────────────
+  const [showAiBadge, setShowAiBadge] = useState(true)
+  useEffect(() => {
+    const t = setTimeout(() => setShowAiBadge(false), 3200)
+    return () => clearTimeout(t)
+  }, [])
+
   const fileInputRef   = useRef<HTMLInputElement>(null)
   const undoTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const searchRef      = useRef<HTMLInputElement>(null)
@@ -555,13 +569,21 @@ function App() {
       {/* ── Header ── */}
       <header>
         <div className="brand">
-          <LogoIcon size={42} />
+          <div className="logo-wrap">
+            <LogoIcon size={42} />
+            {showAiBadge && <span className="ai-badge">AI powered</span>}
+          </div>
           <div>
             <h1>Rezet</h1>
             <p className="subtitle">Your spending at a glance</p>
           </div>
         </div>
         <div className="action-bar">
+          <button
+            className="btn btn-icon dark-toggle"
+            onClick={() => setDarkMode(d => !d)}
+            title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+          >{darkMode ? '☀' : '⏾'}</button>
           <button className="btn btn-secondary" onClick={() => setShowResetModal(true)}>Reset</button>
           <button className="btn btn-primary" onClick={() => {
             if (showUpload) { setShowUpload(false); resetManualForm() }
