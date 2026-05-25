@@ -31,9 +31,16 @@ interface ManualItem { product_name: string; category: string; price: string }
 
 interface Toast { message: string; onUndo?: () => void; id: number }
 
-type SortOption = 'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc' | 'merchant'
-type ChartTab   = 'category' | 'monthly'
-type UploadMode = 'scan' | 'manual'
+interface InsightsData {
+  by_store:   { merchant: string; total: number; visits: number }[]
+  by_product: { name: string; total: number; count: number }[]
+  by_month:   { month: string; month_total: number; products: { name: string; total: number }[] }[]
+}
+
+type SortOption  = 'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc' | 'merchant'
+type ChartTab    = 'category' | 'monthly'
+type UploadMode  = 'scan' | 'manual'
+type InsightTab  = 'store' | 'product' | 'month'
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const CATEGORIES = ['Groceries','Bakery','Beverages','Electronics','Dining','Transport','Health','Deposit','Others']
@@ -117,6 +124,11 @@ function App() {
   // ── Chart tab ───────────────────────────────────────────────────────────
   const [chartTab, setChartTab]               = useState<ChartTab>('category')
 
+  // ── Insights ─────────────────────────────────────────────────────────────
+  const [insights, setInsights]               = useState<InsightsData | null>(null)
+  const [insightTab, setInsightTab]           = useState<InsightTab>('store')
+  const [expandedMonths, setExpandedMonths]   = useState<Set<string>>(new Set())
+
   const fileInputRef   = useRef<HTMLInputElement>(null)
   const undoTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const searchRef      = useRef<HTMLInputElement>(null)
@@ -171,6 +183,10 @@ function App() {
           setData(await res.json())
           setError(null)
           setConnectionStatus('Active')
+          try {
+            const insRes = await tauriFetch(`${base}/api/insights`)
+            if (insRes.ok) setInsights(await insRes.json())
+          } catch {}
           return
         }
       } catch {}
@@ -821,6 +837,137 @@ function App() {
                   {submittingManual ? 'Saving…' : editingId !== null ? 'Save Changes' : 'Add Receipt'}
                 </button>
               </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* ── Insights ── */}
+      {insights && (insights.by_store.length > 0 || insights.by_product.length > 0 || insights.by_month.length > 0) && (
+        <section className="card insights-card" style={{ animationDelay: '0.28s' }}>
+          <div className="chart-header">
+            <h3>Insights</h3>
+            <div className="chart-tabs">
+              <button
+                className={`chart-tab${insightTab === 'store' ? ' active' : ''}`}
+                onClick={() => setInsightTab('store')}
+              >By Store</button>
+              <button
+                className={`chart-tab${insightTab === 'product' ? ' active' : ''}`}
+                onClick={() => setInsightTab('product')}
+                disabled={insights.by_product.length === 0}
+              >By Product</button>
+              <button
+                className={`chart-tab${insightTab === 'month' ? ' active' : ''}`}
+                onClick={() => setInsightTab('month')}
+                disabled={insights.by_month.length === 0}
+              >By Month</button>
+            </div>
+          </div>
+
+          {/* ── By Store ── */}
+          {insightTab === 'store' && (
+            <div className="insights-list">
+              {insights.by_store.map((s, i) => {
+                const maxTotal = insights.by_store[0]?.total || 1
+                const pct = Math.round((s.total / maxTotal) * 100)
+                return (
+                  <div key={s.merchant} className="insight-row" style={{ animationDelay: `${i * 0.05}s` }}>
+                    <div className="insight-row-header">
+                      <span className="insight-name">{s.merchant}</span>
+                      <div className="insight-row-right">
+                        <span className="insight-badge">{s.visits} visit{s.visits !== 1 ? 's' : ''}</span>
+                        <span className="insight-amount">€{s.total.toFixed(2)}</span>
+                      </div>
+                    </div>
+                    <div className="insight-bar-track">
+                      <div className="insight-bar-fill insight-bar-store" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {/* ── By Product ── */}
+          {insightTab === 'product' && (
+            <div className="insights-list">
+              {insights.by_product.length === 0 ? (
+                <p className="insights-empty">No item data yet — scan receipts with item breakdowns to see product insights</p>
+              ) : (
+                <>
+                  <p className="chart-subtitle">{insights.by_product.length} unique product{insights.by_product.length !== 1 ? 's' : ''} tracked</p>
+                  {insights.by_product.map((p, i) => {
+                    const maxTotal = insights.by_product[0]?.total || 1
+                    const pct = Math.round((p.total / maxTotal) * 100)
+                    return (
+                      <div key={p.name} className="insight-row" style={{ animationDelay: `${i * 0.04}s` }}>
+                        <div className="insight-row-header">
+                          <span className="insight-name">{p.name}</span>
+                          <div className="insight-row-right">
+                            <span className="insight-badge">×{p.count}</span>
+                            <span className="insight-amount">€{p.total.toFixed(2)}</span>
+                          </div>
+                        </div>
+                        <div className="insight-bar-track">
+                          <div className="insight-bar-fill insight-bar-product" style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── By Month ── */}
+          {insightTab === 'month' && (
+            <div className="insights-month-list">
+              {insights.by_month.length === 0 ? (
+                <p className="insights-empty">No monthly data yet</p>
+              ) : insights.by_month.map(m => {
+                const isOpen = expandedMonths.has(m.month)
+                const toggle = () => setExpandedMonths(prev => {
+                  const next = new Set(prev)
+                  isOpen ? next.delete(m.month) : next.add(m.month)
+                  return next
+                })
+                return (
+                  <div key={m.month} className="month-accordion">
+                    <button className={`month-accordion-header${isOpen ? ' open' : ''}`} onClick={toggle}>
+                      <span className="month-label">{formatMonth(m.month)}</span>
+                      <div className="month-header-right">
+                        {m.products.length > 0 && (
+                          <span className="insight-badge">{m.products.length} product{m.products.length !== 1 ? 's' : ''}</span>
+                        )}
+                        <span className="insight-amount">€{m.month_total.toFixed(2)}</span>
+                        <span className={`month-chevron${isOpen ? ' open' : ''}`}>›</span>
+                      </div>
+                    </button>
+                    {isOpen && (
+                      <div className="month-accordion-body">
+                        {m.products.length === 0 ? (
+                          <p className="insights-empty" style={{ padding: '8px 0' }}>No item data for this month</p>
+                        ) : m.products.map((p, i) => {
+                          const maxTotal = m.products[0]?.total || 1
+                          const pct = Math.round((p.total / maxTotal) * 100)
+                          return (
+                            <div key={p.name} className="insight-row sub-row" style={{ animationDelay: `${i * 0.03}s` }}>
+                              <div className="insight-row-header">
+                                <span className="insight-name">{p.name}</span>
+                                <span className="insight-amount">€{p.total.toFixed(2)}</span>
+                              </div>
+                              <div className="insight-bar-track">
+                                <div className="insight-bar-fill insight-bar-month" style={{ width: `${pct}%` }} />
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           )}
         </section>

@@ -304,6 +304,70 @@ async def delete_receipt(receipt_id: int, db: Session = Depends(get_db)):
     return {"status": "success"}
 
 
+@app.get("/api/insights")
+async def get_insights(db: Session = Depends(get_db)):
+    receipts = db.query(models.Receipt).all()
+    items    = db.query(models.Item).all()
+
+    # ── By store ──────────────────────────────────────────────────────────────
+    store_data: dict = {}
+    for r in receipts:
+        if r.merchant not in store_data:
+            store_data[r.merchant] = {"total": 0.0, "count": 0}
+        store_data[r.merchant]["total"] += r.total_amount
+        store_data[r.merchant]["count"] += 1
+
+    by_store = sorted(
+        [{"merchant": k, "total": round(v["total"], 2), "visits": v["count"]}
+         for k, v in store_data.items()],
+        key=lambda x: x["total"], reverse=True
+    )
+
+    # ── By product ────────────────────────────────────────────────────────────
+    product_data: dict = {}
+    for item in items:
+        name = item.product_name
+        if name not in product_data:
+            product_data[name] = {"total": 0.0, "count": 0}
+        product_data[name]["total"] += item.price
+        product_data[name]["count"] += 1
+
+    by_product = sorted(
+        [{"name": k, "total": round(v["total"], 2), "count": v["count"]}
+         for k, v in product_data.items()],
+        key=lambda x: x["total"], reverse=True
+    )[:30]
+
+    # ── By month ──────────────────────────────────────────────────────────────
+    month_product: dict = defaultdict(lambda: defaultdict(float))
+    receipt_month: dict = {r.id: r.date[:7] for r in receipts if r.date and len(r.date) >= 7}
+
+    for item in items:
+        month = receipt_month.get(item.receipt_id)
+        if month:
+            month_product[month][item.product_name] += item.price
+
+    # Also include months that have receipts but no items
+    receipt_month_totals: dict = defaultdict(float)
+    for r in receipts:
+        if r.date and len(r.date) >= 7:
+            receipt_month_totals[r.date[:7]] += r.total_amount
+
+    by_month = sorted([
+        {
+            "month": m,
+            "month_total": round(receipt_month_totals.get(m, 0), 2),
+            "products": sorted(
+                [{"name": p, "total": round(t, 2)} for p, t in prods.items()],
+                key=lambda x: x["total"], reverse=True
+            )[:15]
+        }
+        for m, prods in month_product.items()
+    ], key=lambda x: x["month"], reverse=True)
+
+    return {"by_store": by_store, "by_product": by_product, "by_month": by_month}
+
+
 @app.post("/api/reset")
 async def reset_data(db: Session = Depends(get_db)):
     for fn in os.listdir(UPLOAD_DIR):

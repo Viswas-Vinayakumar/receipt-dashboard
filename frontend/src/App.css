@@ -1179,6 +1179,175 @@ tr:last-child td {
 
 .detail-loading p { margin: 0; }
 
+/* ── Insights ─────────────────────────────────────────────────────────────── */
+.insights-card {
+  animation: fadeInUp 0.4s ease-out both;
+}
+
+.insights-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 6px;
+}
+
+.insight-row {
+  animation: fadeInUp 0.3s ease-out both;
+}
+
+.insight-row-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.insight-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #1d1d1f;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 10px;
+}
+
+.insight-row-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.insight-badge {
+  font-size: 11px;
+  font-weight: 500;
+  color: #86868b;
+  background: #f0f0f5;
+  padding: 2px 9px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+.insight-amount {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1d1d1f;
+  min-width: 68px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.insight-bar-track {
+  height: 6px;
+  background: rgba(0,0,0,0.06);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.insight-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.65s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.insight-bar-store   { background: #3b82f6; }
+.insight-bar-product { background: #10b981; }
+.insight-bar-month   { background: #f59e0b; }
+
+.insights-empty {
+  font-size: 14px;
+  color: #86868b;
+  text-align: center;
+  padding: 20px 0;
+}
+
+/* ── Month accordion ────────────────────────────────────────────────────────── */
+.insights-month-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.month-accordion {
+  border: 1px solid rgba(0,0,0,0.07);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.month-accordion-header {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 13px 16px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  text-align: left;
+}
+
+.month-accordion-header:hover {
+  background: rgba(0,0,0,0.025);
+}
+
+.month-accordion-header.open {
+  border-bottom: 1px solid rgba(0,0,0,0.07);
+}
+
+.month-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1d1d1f;
+}
+
+.month-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.month-chevron {
+  font-size: 18px;
+  color: #86868b;
+  display: inline-block;
+  transition: transform 0.2s ease;
+  line-height: 1;
+  margin-left: 2px;
+}
+
+.month-chevron.open {
+  transform: rotate(90deg);
+}
+
+.month-accordion-body {
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: rgba(0,0,0,0.012);
+}
+
+.sub-row .insight-name {
+  font-size: 13px;
+  font-weight: 400;
+  color: #3c3c43;
+}
+
+.sub-row .insight-amount {
+  font-size: 13px;
+  font-weight: 500;
+  min-width: 60px;
+}
+
+.sub-row .insight-bar-track {
+  height: 4px;
+}
+
 /* ── Print stylesheet ─────────────────────────────────────────────────────── */
 @media print {
   body { background: white; }
@@ -1208,4 +1377,6 @@ tr:last-child td {
   h1 { font-size: 22px; }
   .subtitle { color: #555; }
   h3 { color: #555; }
+
+  .insights-card { break-inside: avoid; }
 }
