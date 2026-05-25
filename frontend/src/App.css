@@ -1,9 +1,12 @@
 /* ── Reset & Root ─────────────────────────────────────────────────────────── */
 body {
-  background:
-    radial-gradient(ellipse 1100px 700px at -15% -10%, rgba(99,102,241,0.07) 0%, transparent 70%),
-    radial-gradient(ellipse 700px 500px at 115% 115%, rgba(0,113,227,0.06) 0%, transparent 70%),
-    #eef0f6;
+  background-color: #eef0f6;
+  background-image:
+    radial-gradient(ellipse 1100px 700px at -15% -10%, rgba(99,102,241,0.10) 0%, transparent 70%),
+    radial-gradient(ellipse 700px 500px at 115% 115%, rgba(0,113,227,0.08) 0%, transparent 70%),
+    radial-gradient(circle, rgba(99,102,241,0.07) 1px, transparent 1px);
+  background-size: auto, auto, 28px 28px;
+  background-repeat: no-repeat, no-repeat, repeat;
   min-height: 100vh;
 }
 
@@ -248,11 +251,19 @@ header {
   animation: fadeInUp 0.4s cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 
-/* ── Dashboard Grid (4 stat cards) ───────────────────────────────────────── */
+/* ── Dashboard Grid ───────────────────────────────────────────────────────── */
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 18px;
+}
+
+.dashboard-grid.grid-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+@media (max-width: 1050px) {
+  .dashboard-grid.grid-4 { grid-template-columns: repeat(2, 1fr); }
 }
 
 @media (max-width: 900px) {
@@ -261,6 +272,7 @@ header {
 
 @media (max-width: 500px) {
   .dashboard-grid { grid-template-columns: 1fr; }
+  .dashboard-grid.grid-4 { grid-template-columns: 1fr; }
 }
 
 .stat-card {
@@ -322,6 +334,31 @@ header {
   font-size: 12px;
   color: #86868b;
   margin-top: 6px;
+}
+
+/* ── Top Product Stat Card ────────────────────────────────────────────────── */
+.top-product-stat {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 6px;
+  overflow: hidden;
+}
+
+.top-product-emoji {
+  font-size: 26px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.top-product-stat-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1d1d1f;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
 }
 
 /* ── Chart Card ───────────────────────────────────────────────────────────── */
@@ -1664,10 +1701,13 @@ tr:last-child td {
 
 /* ── Dark mode ────────────────────────────────────────────────────────────── */
 html.dark body {
-  background:
-    radial-gradient(ellipse 1100px 700px at -15% -10%, rgba(99,102,241,0.1) 0%, transparent 70%),
-    radial-gradient(ellipse 700px 500px at 115% 115%, rgba(0,113,227,0.08) 0%, transparent 70%),
-    #090910;
+  background-color: #090910;
+  background-image:
+    radial-gradient(ellipse 1100px 700px at -15% -10%, rgba(99,102,241,0.14) 0%, transparent 70%),
+    radial-gradient(ellipse 700px 500px at 115% 115%, rgba(0,113,227,0.10) 0%, transparent 70%),
+    radial-gradient(circle, rgba(99,102,241,0.10) 1px, transparent 1px);
+  background-size: auto, auto, 28px 28px;
+  background-repeat: no-repeat, no-repeat, repeat;
   color: #f0f0f5;
 }
 
@@ -1691,6 +1731,7 @@ html.dark .card {
 /* Stat cards */
 html.dark .stat-value { color: #f0f0f5; }
 html.dark .stat-sub   { color: #636366; }
+html.dark .top-product-stat-name { color: #f0f0f5; }
 
 /* Header */
 html.dark header { border-color: rgba(255,255,255,0.07); }

@@ -70,16 +70,78 @@ const formatMonth = (m: string) => {
 const emptyManualItem = (): ManualItem => ({ product_name: '', category: 'Groceries', price: '' })
 const todayISO = () => new Date().toISOString().split('T')[0]
 
-// ── Logo — V5 refined mark ────────────────────────────────────────────────
+// ── Product emoji map ─────────────────────────────────────────────────────
+const PRODUCT_EMOJI_MAP: [string, string][] = [
+  ['banana','🍌'],['banane','🍌'],['apple','🍎'],['apfel','🍎'],
+  ['orange','🍊'],['lemon','🍋'],['zitrone','🍋'],['grape','🍇'],
+  ['weintraub','🍇'],['strawberry','🍓'],['erdbeere','🍓'],
+  ['tomato','🍅'],['tomate','🍅'],['carrot','🥕'],['karotte','🥕'],
+  ['möhre','🥕'],['potato','🥔'],['kartoffel','🥔'],['onion','🧅'],
+  ['zwiebel','🧅'],['garlic','🧄'],['knoblauch','🧄'],
+  ['paprika','🫑'],['cucumber','🥒'],['gurke','🥒'],
+  ['lettuce','🥬'],['salat','🥬'],['broccoli','🥦'],
+  ['mushroom','🍄'],['pilz','🍄'],
+  ['milk','🥛'],['milch','🥛'],['cheese','🧀'],['käse','🧀'],
+  ['butter','🧈'],['yogurt','🥛'],['joghurt','🥛'],['sahne','🫙'],
+  ['egg','🥚'],['ei ','🥚'],['eier','🥚'],
+  ['chicken','🍗'],['hähnchen','🍗'],['hühnchen','🍗'],
+  ['beef','🥩'],['rindfleisch','🥩'],['pork','🥩'],
+  ['sausage','🌭'],['wurst','🌭'],['bratwurst','🌭'],
+  ['schinken','🥩'],['fish','🐟'],['fisch','🐟'],
+  ['salmon','🐟'],['lachs','🐟'],['shrimp','🦐'],
+  ['bread','🍞'],['brot','🍞'],['brötchen','🥖'],
+  ['cake','🎂'],['kuchen','🎂'],['croissant','🥐'],
+  ['muffin','🧁'],['pretzel','🥨'],['brezel','🥨'],
+  ['cookie','🍪'],['keks','🍪'],
+  ['coffee','☕'],['kaffee','☕'],['tea','🍵'],['tee','🍵'],
+  ['water','💧'],['wasser','💧'],['juice','🧃'],['saft','🧃'],
+  ['beer','🍺'],['bier','🍺'],['wine','🍷'],['wein','🍷'],
+  ['cola','🥤'],['soda','🥤'],
+  ['chocolate','🍫'],['schokolade','🍫'],['schoko','🍫'],
+  ['candy','🍬'],['bonbon','🍬'],['chips','🍟'],
+  ['nuts','🥜'],['nüsse','🥜'],['eis','🍦'],
+  ['pasta','🍝'],['rice','🍚'],['reis','🍚'],
+  ['flour','🌾'],['mehl','🌾'],['sugar','🍬'],['zucker','🍬'],
+  ['salt','🧂'],['salz','🧂'],['oil','🫙'],['öl','🫙'],
+  ['shampoo','🧴'],['soap','🧼'],['seife','🧼'],
+  ['tissue','🧻'],['toilettenp','🧻'],
+  ['medicine','💊'],['medizin','💊'],['tabletten','💊'],
+  ['phone','📱'],['handy','📱'],['laptop','💻'],
+  ['cable','🔌'],['kabel','🔌'],['battery','🔋'],['batterie','🔋'],
+  ['pen','✏️'],['stift','✏️'],['book','📚'],['buch','📚'],
+]
+const getProductEmoji = (name: string): string => {
+  const lower = name.toLowerCase()
+  for (const [kw, emoji] of PRODUCT_EMOJI_MAP) {
+    if (lower.includes(kw)) return emoji
+  }
+  return '🛍️'
+}
+
+// ── Logo — receipt scroll in gradient ring ────────────────────────────────
 const LogoIcon = ({ size = 40 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 84 84" fill="none" xmlns="http://www.w3.org/2000/svg">
-    {/* Side bars — soft blue-gray, slightly recessed */}
-    <line x1="29.5" y1="21"   x2="29.5" y2="63"   stroke="#c0cce0" strokeWidth="2.2" strokeLinecap="round"/>
-    <line x1="54.5" y1="21"   x2="54.5" y2="63"   stroke="#c0cce0" strokeWidth="2.2" strokeLinecap="round"/>
-    {/* Oval — deep navy */}
-    <ellipse cx="42" cy="42" rx="17.5" ry="22.5" stroke="#0e1b42" strokeWidth="3" strokeLinecap="round"/>
-    {/* Center bar — brand blue, crosses oval */}
-    <line x1="42" y1="17.5" x2="42" y2="66.5" stroke="#0071e3" strokeWidth="3" strokeLinecap="round"/>
+    <defs>
+      <linearGradient id="rzGrad" x1="4" y1="4" x2="80" y2="80" gradientUnits="userSpaceOnUse">
+        <stop stopColor="#6366f1"/>
+        <stop offset="1" stopColor="#0071e3"/>
+      </linearGradient>
+    </defs>
+    {/* Gradient ring */}
+    <circle cx="42" cy="42" r="37" stroke="url(#rzGrad)" strokeWidth="2.5" fill="rgba(245,248,255,0.4)"/>
+    {/* Receipt body */}
+    <rect x="25" y="14" width="34" height="52" rx="5" fill="white" stroke="#e0eaf8" strokeWidth="1.5"/>
+    {/* Merchant bar — bold blue */}
+    <rect x="32" y="22" width="20" height="3.5" rx="1.75" fill="#0071e3"/>
+    {/* Item lines */}
+    <rect x="32" y="31" width="14" height="2" rx="1" fill="#ccd8ee"/>
+    <rect x="32" y="36.5" width="18" height="2" rx="1" fill="#ccd8ee"/>
+    <rect x="32" y="42" width="11" height="2" rx="1" fill="#ccd8ee"/>
+    {/* Separator */}
+    <line x1="32" y1="48" x2="51" y2="48" stroke="#e0eaf8" strokeWidth="1"/>
+    {/* Total row — gradient */}
+    <rect x="32" y="53" width="9" height="3" rx="1.5" fill="#6366f1"/>
+    <rect x="43" y="52.5" width="8" height="3.5" rx="1.75" fill="#0071e3"/>
   </svg>
 )
 
@@ -628,7 +690,7 @@ function App() {
       )}
 
       {/* ── Stat cards ── */}
-      <div className="dashboard-grid">
+      <div className={`dashboard-grid${insights?.by_product?.length ? ' grid-4' : ''}`}>
         <div className="card stat-card" style={{ animationDelay: '0.05s' }}>
           <h3>Total Spent</h3>
           <div className="stat-value">€{data?.total_spent.toFixed(2) ?? '0.00'}</div>
@@ -657,6 +719,18 @@ function App() {
             return <div className="stat-sub">{pct}% of spending</div>
           })()}
         </div>
+
+        {/* ── Top Product stat card ── */}
+        {insights?.by_product?.length ? (
+          <div className="card stat-card" style={{ animationDelay: '0.2s' }}>
+            <h3>Top Product</h3>
+            <div className="top-product-stat">
+              <span className="top-product-emoji">{getProductEmoji(insights.by_product[0].name)}</span>
+              <span className="top-product-stat-name">{insights.by_product[0].name}</span>
+            </div>
+            <div className="stat-sub">€{insights.by_product[0].total.toFixed(2)} · ×{insights.by_product[0].count}</div>
+          </div>
+        ) : null}
       </div>
 
       {/* ── Charts ── */}

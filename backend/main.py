@@ -228,8 +228,8 @@ def preprocess_image(image_data: bytes) -> bytes:
         except Exception as e:
             logger.debug(f"EXIF rotation skipped: {e}")
 
-        # Resize: cap longest edge at 1920px (halves inference time for large photos)
-        MAX_DIM = 1920
+        # Resize: cap longest edge at 1280px (faster inference, still plenty of detail)
+        MAX_DIM = 1280
         w, h = img.size
         if max(w, h) > MAX_DIM:
             scale = MAX_DIM / max(w, h)
@@ -240,7 +240,7 @@ def preprocess_image(image_data: bytes) -> bytes:
         if img.mode not in ("RGB", "L"):
             img = img.convert("RGB")
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=90, optimize=True)
+        img.save(buf, format="JPEG", quality=85, optimize=True)
         return buf.getvalue()
 
     except Exception as e:
@@ -259,7 +259,7 @@ def call_ollama(image_data: bytes) -> dict:
         "images": [image_b64],
         "stream": False,
         "format": "json",
-        "options": {"temperature": 0, "num_predict": 2048},
+        "options": {"temperature": 0, "num_predict": 1400},
     }
 
     for attempt in range(2):
