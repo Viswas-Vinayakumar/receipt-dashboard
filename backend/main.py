@@ -482,6 +482,15 @@ async def get_dashboard_data(db: Session = Depends(get_db)):
         cats = receipt_categories.get(rid, {})
         return max(cats, key=cats.get) if cats else "Others"
 
+    # ── Month-over-month ───────────────────────────────────────────────────
+    _now = datetime.now()
+    current_month_str = _now.strftime("%Y-%m")
+    prev_month_str = f"{_now.year - 1}-12" if _now.month == 1 else f"{_now.year}-{str(_now.month - 1).zfill(2)}"
+    current_month_total = sum(r.total_amount for r in receipts if r.date and r.date[:7] == current_month_str)
+    prev_month_total    = sum(r.total_amount for r in receipts if r.date and r.date[:7] == prev_month_str)
+    mom_delta_pct = round(((current_month_total - prev_month_total) / prev_month_total) * 100, 1) \
+                    if prev_month_total > 0 else None
+
     return {
         "total_spent":    round(total_spent, 2),
         "receipt_count":  len(receipts),
@@ -496,9 +505,19 @@ async def get_dashboard_data(db: Session = Depends(get_db)):
             {"date": k, "total": round(v, 2)} for k, v in daily.items()],
             key=lambda x: x["date"]),
         "recent_receipts": [
-            {"id": r.id, "merchant": r.merchant, "date": r.date,
-             "total_amount": r.total_amount, "category": top_cat_for(r.id)}
-            for r in receipts]
+            {
+                "id": r.id, "merchant": r.merchant, "date": r.date,
+                "total_amount": r.total_amount, "category": top_cat_for(r.id),
+                "has_image": bool(r.image_path and os.path.exists(r.image_path))
+            }
+            for r in receipts],
+        "mom": {
+            "current_month": current_month_str,
+            "current_total": round(current_month_total, 2),
+            "prev_month":    prev_month_str,
+            "prev_total":    round(prev_month_total, 2),
+            "delta_pct":     mom_delta_pct
+        }
     }
 
 
@@ -508,9 +527,46 @@ async def get_receipts(db: Session = Depends(get_db)):
     return [
         {"id": r.id, "merchant": r.merchant, "location": r.location,
          "date": r.date, "total_amount": r.total_amount,
+         "has_image": bool(r.image_path and os.path.exists(r.image_path)),
          "items": [{"product_name": i.product_name, "category": i.category, "price": i.price}
                    for i in db.query(models.Item).filter(models.Item.receipt_id == r.id).all()]}
         for r in receipts]
+
+
+@app.get("/api/receipts/{receipt_id}/image")
+async def get_receipt_image(receipt_id: int, db: Session = Depends(get_db)):
+    """Return the original receipt image as base64-encoded JSON (JPEG/PNG)."""
+    receipt = db.query(models.Receipt).filter(models.Receipt.id == receipt_id).first()
+    if not receipt:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    if not receipt.image_path or not os.path.exists(receipt.image_path):
+        raise HTTPException(status_code=404, detail="Image not found")
+    with open(receipt.image_path, "rb") as f:
+        img_data = f.read()
+    ext  = os.path.splitext(receipt.image_path)[1].lower()
+    mime = "image/png" if ext == ".png" else "image/jpeg"
+    return {"data": base64.b64encode(img_data).decode(), "mime": mime}
+
+
+@app.get("/api/receipts/{receipt_id}")
+async def get_receipt(receipt_id: int, db: Session = Depends(get_db)):
+    """Single receipt detail — faster than loading the full list."""
+    receipt = db.query(models.Receipt).filter(models.Receipt.id == receipt_id).first()
+    if not receipt:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    items = db.query(models.Item).filter(models.Item.receipt_id == receipt_id).all()
+    return {
+        "id":           receipt.id,
+        "merchant":     receipt.merchant or "",
+        "location":     receipt.location or "",
+        "date":         receipt.date or "",
+        "total_amount": receipt.total_amount or 0,
+        "has_image":    bool(receipt.image_path and os.path.exists(receipt.image_path)),
+        "items": [
+            {"product_name": i.product_name, "category": i.category, "price": i.price}
+            for i in items
+        ]
+    }
 
 
 @app.delete("/api/receipts/{receipt_id}")

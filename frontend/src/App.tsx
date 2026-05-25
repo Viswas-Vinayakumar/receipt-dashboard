@@ -16,7 +16,8 @@ interface DashboardData {
   category_spend: { name: string; value: number; count: number }[]
   monthly_trend:  { month: string; total: number }[]
   daily_trend:    { date: string; total: number }[]
-  recent_receipts: { id: number; merchant: string; date: string; total_amount: number; category: string }[]
+  recent_receipts: { id: number; merchant: string; date: string; total_amount: number; category: string; has_image: boolean }[]
+  mom: { current_month: string; current_total: number; prev_month: string; prev_total: number; delta_pct: number | null } | null
 }
 
 interface DetailReceipt {
@@ -25,6 +26,7 @@ interface DetailReceipt {
   location: string
   date: string
   total_amount: number
+  has_image: boolean
   items: { product_name: string; category: string; price: number }[]
 }
 
@@ -204,6 +206,14 @@ function App() {
   const [showEnginePopup, setShowEnginePopup] = useState(false)
   const engineShownRef                        = useRef(false)
 
+  // ── Image viewer ──────────────────────────────────────────────────────────
+  const [imageUrl, setImageUrl]               = useState<string | null>(null)
+  const [loadingImage, setLoadingImage]       = useState(false)
+
+  // ── Date range filter ─────────────────────────────────────────────────────
+  const [dateFrom, setDateFrom]               = useState('')
+  const [dateTo, setDateTo]                   = useState('')
+
   // ── Scan animation phases ─────────────────────────────────────────────────
   const SCAN_PHASES = ['Reading receipt…', 'Detecting items…', 'Extracting totals…', 'Finalising…']
   const [scanPhase, setScanPhase]             = useState(0)
@@ -219,6 +229,34 @@ function App() {
     document.documentElement.classList.toggle('dark', darkMode)
     localStorage.setItem('darkMode', String(darkMode))
   }, [darkMode])
+
+  // ── Keyboard shortcuts ────────────────────────────────────────────────────
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey
+      // ⌘U / Ctrl+U → open upload modal
+      if (mod && e.key === 'u') {
+        e.preventDefault()
+        setUploadMode('scan'); setUploadErr(null); setShowUpload(true)
+        return
+      }
+      // ⌘F / Ctrl+F → focus search
+      if (mod && e.key === 'f') {
+        e.preventDefault()
+        searchRef.current?.focus()
+        return
+      }
+      // Escape → close modals in priority order
+      if (e.key === 'Escape') {
+        if (imageUrl)       { setImageUrl(null); return }
+        if (detailReceipt)  { setDetailReceipt(null); return }
+        if (showResetModal) { setShowResetModal(false); return }
+        if (showUpload)     { setShowUpload(false); return }
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [imageUrl, detailReceipt, showResetModal, showUpload])
 
   // ── AI badge (fades in then disappears) ──────────────────────────────────
   const [showAiBadge, setShowAiBadge] = useState(true)
@@ -581,18 +619,29 @@ function App() {
   const handleRowClick = async (id: number) => {
     setLoadingDetail(true); setDetailReceipt(null)
     try {
-      for (const base of ['http://127.0.0.1:8888', 'http://localhost:8888']) {
-        try {
-          const res = await tauriFetch(`${base}/api/receipts`)
-          if (res.ok) {
-            const all: DetailReceipt[] = await res.json()
-            const found = all.find(r => r.id === id)
-            if (found) { setDetailReceipt(found); return }
-          }
-        } catch {}
+      const res = await tauriFetch(`http://127.0.0.1:8888/api/receipts/${id}`)
+      if (res.ok) {
+        setDetailReceipt(await res.json())
+      } else {
+        showToast('Could not load receipt details')
       }
-      showToast('Could not load receipt details')
-    } finally { setLoadingDetail(false) }
+    } catch { showToast('Could not load receipt details') }
+    finally { setLoadingDetail(false) }
+  }
+
+  // ── View original receipt image ───────────────────────────────────────────
+  const handleViewImage = async (id: number) => {
+    setLoadingImage(true)
+    try {
+      const res = await tauriFetch(`http://127.0.0.1:8888/api/receipts/${id}/image`)
+      if (res.ok) {
+        const { data, mime } = await res.json()
+        setImageUrl(`data:${mime};base64,${data}`)
+      } else {
+        showToast('Original image not available for this receipt')
+      }
+    } catch { showToast('Could not load image') }
+    finally { setLoadingImage(false) }
   }
 
   // ── Export CSV ───────────────────────────────────────────────────────────
@@ -616,16 +665,22 @@ function App() {
 
   // ── Derived values ───────────────────────────────────────────────────────
   const chartTotal  = data?.category_spend.reduce((s, e) => s + e.value, 0) ?? 0
-  const isFiltered  = !!(searchQuery.trim() || filterCategory)
+  const isFiltered  = !!(searchQuery.trim() || filterCategory || dateFrom || dateTo)
 
   const displayedReceipts = useMemo(() => {
     if (!data) return []
     let list = [...data.recent_receipts]
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase()
-      list = list.filter(r => r.merchant.toLowerCase().includes(q) || r.category.toLowerCase().includes(q))
+      list = list.filter(r =>
+        r.merchant.toLowerCase().includes(q) ||
+        r.category.toLowerCase().includes(q) ||
+        r.date.includes(q)
+      )
     }
     if (filterCategory) list = list.filter(r => r.category === filterCategory)
+    if (dateFrom) list = list.filter(r => r.date >= dateFrom)
+    if (dateTo)   list = list.filter(r => r.date <= dateTo)
     list.sort((a, b) => {
       switch (sortBy) {
         case 'date-asc':    return a.date.localeCompare(b.date)
@@ -636,9 +691,53 @@ function App() {
       }
     })
     return list
-  }, [data, searchQuery, sortBy, filterCategory])
+  }, [data, searchQuery, sortBy, filterCategory, dateFrom, dateTo])
 
   const filteredTotal = displayedReceipts.reduce((s, r) => s + r.total_amount, 0)
+
+  // ── Smart insight chips ───────────────────────────────────────────────────
+  const statChips = useMemo(() => {
+    if (!data || data.receipt_count === 0) return []
+    const chips: { icon: string; label: string; value: string; color: string }[] = []
+
+    // Month-over-month change
+    if (data.mom && data.mom.prev_total > 0 && data.mom.delta_pct !== null) {
+      const up = data.mom.delta_pct > 0
+      chips.push({
+        icon:  up ? '↑' : '↓',
+        label: `vs ${formatMonth(data.mom.prev_month)}`,
+        value: `${up ? '+' : ''}${data.mom.delta_pct.toFixed(0)}%`,
+        color: up ? '#dc2626' : '#16a34a',
+      })
+    }
+
+    // Biggest single purchase
+    if (data.recent_receipts.length > 0) {
+      const biggest = data.recent_receipts.reduce((a, b) => a.total_amount > b.total_amount ? a : b)
+      chips.push({ icon: '🏆', label: 'Biggest purchase', value: `€${biggest.total_amount.toFixed(2)} · ${biggest.merchant}`, color: '#6366f1' })
+    }
+
+    // Most visited store
+    if (insights?.by_store && insights.by_store.length > 0) {
+      const top = insights.by_store[0]
+      chips.push({ icon: '📍', label: 'Most visited', value: `${top.merchant} · ${top.visits}×`, color: '#f59e0b' })
+    }
+
+    // Days since last receipt
+    if (data.recent_receipts.length > 0) {
+      const last = [...data.recent_receipts].sort((a, b) => b.date.localeCompare(a.date))[0]
+      if (last?.date) {
+        const days = Math.floor((Date.now() - new Date(last.date + 'T12:00:00').getTime()) / 86_400_000)
+        chips.push({
+          icon: '🕐', label: 'Last receipt',
+          value: days === 0 ? 'Today' : days === 1 ? 'Yesterday' : `${days} days ago`,
+          color: days <= 1 ? '#007AFF' : '#86868b'
+        })
+      }
+    }
+
+    return chips
+  }, [data, insights])
 
   const hasChart = data && (data.category_spend.length > 0 || data.monthly_trend.length > 0)
 
@@ -728,7 +827,14 @@ function App() {
       <div className={`dashboard-grid${insights?.by_product?.length ? ' grid-4' : ''}`}>
         <div className="card stat-card stat-card--blue" style={{ animationDelay: '0.05s' }}>
           <h3>Total Spent</h3>
-          <div className="stat-value">€{data?.total_spent.toFixed(2) ?? '0.00'}</div>
+          <div className="stat-value-row">
+            <div className="stat-value">€{data?.total_spent.toFixed(2) ?? '0.00'}</div>
+            {data?.mom && data.mom.delta_pct !== null && data.mom.prev_total > 0 && (
+              <span className={`mom-badge ${data.mom.delta_pct > 0 ? 'mom-up' : 'mom-down'}`}>
+                {data.mom.delta_pct > 0 ? '↑' : '↓'}{Math.abs(data.mom.delta_pct).toFixed(0)}%
+              </span>
+            )}
+          </div>
           {data && data.receipt_count > 0 && (
             <div className="stat-sub">avg €{(data.total_spent / data.receipt_count).toFixed(2)} / receipt</div>
           )}
@@ -767,6 +873,21 @@ function App() {
           </div>
         ) : null}
       </div>
+
+      {/* ── Smart insight chips ── */}
+      {statChips.length > 0 && (
+        <div className="stat-chips-row">
+          {statChips.map((chip, i) => (
+            <div key={i} className="stat-chip" style={{ animationDelay: `${0.08 + i * 0.06}s` }}>
+              <span className="stat-chip-icon">{chip.icon}</span>
+              <div className="stat-chip-text">
+                <span className="stat-chip-label">{chip.label}</span>
+                <span className="stat-chip-value" style={{ color: chip.color }}>{chip.value}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ── Charts ── */}
       {hasChart && (
@@ -1219,8 +1340,21 @@ function App() {
                 <option value="amount-asc">Lowest amount</option>
                 <option value="merchant">Merchant A→Z</option>
               </select>
+              <div className="date-range-wrap">
+                <input
+                  type="date" className="select-ctrl date-filter"
+                  value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+                  title="From date" max={dateTo || undefined}
+                />
+                <span className="date-sep">–</span>
+                <input
+                  type="date" className="select-ctrl date-filter"
+                  value={dateTo} onChange={e => setDateTo(e.target.value)}
+                  title="To date" min={dateFrom || undefined}
+                />
+              </div>
               {isFiltered && (
-                <button className="btn-clear" onClick={() => { setSearchQuery(''); setFilterCategory('') }}>
+                <button className="btn-clear" onClick={() => { setSearchQuery(''); setFilterCategory(''); setDateFrom(''); setDateTo('') }}>
                   Clear filters
                 </button>
               )}
@@ -1264,10 +1398,18 @@ function App() {
             ))}
 
             {(!data || data.recent_receipts.length === 0) && (
-              <tr><td colSpan={5} className="empty-state">
-                <div className="empty-icon">🧾</div>
-                <p>No receipts yet</p>
-                <p className="empty-hint">Scan a receipt or enter one manually</p>
+              <tr><td colSpan={5} className="empty-state empty-welcome">
+                <div className="empty-welcome-icon">🧾</div>
+                <p className="empty-welcome-title">No receipts yet</p>
+                <p className="empty-welcome-sub">Drop a receipt image anywhere, or scan your first one below</p>
+                <button
+                  className="btn btn-primary"
+                  style={{ marginTop: 20, fontSize: 15, padding: '10px 28px' }}
+                  onClick={() => { setUploadMode('scan'); setUploadErr(null); setShowUpload(true) }}
+                >
+                  + Scan your first receipt
+                </button>
+                <p className="empty-welcome-hint">⌘U to open · Drag & drop supported · German & English</p>
               </td></tr>
             )}
 
@@ -1309,7 +1451,17 @@ function App() {
                     <p className="detail-meta">{formatDate(detailReceipt.date)}</p>
                   </div>
                   <div className="detail-header-actions">
-                    <button className="btn btn-secondary btn-sm" onClick={() => openEdit(detailReceipt)}>Edit</button>
+                    {detailReceipt.has_image && (
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => handleViewImage(detailReceipt.id)}
+                        disabled={loadingImage}
+                        title="View original receipt photo (⌘ click to zoom)"
+                      >
+                        {loadingImage ? '…' : '🖼 View'}
+                      </button>
+                    )}
+                    <button className="btn btn-secondary btn-sm" onClick={() => openEdit(detailReceipt)}>✏️ Edit</button>
                     <button className="detail-close" onClick={() => setDetailReceipt(null)}>✕</button>
                   </div>
                 </div>
@@ -1354,6 +1506,16 @@ function App() {
               <button className="btn btn-secondary" onClick={() => setShowResetModal(false)}>Cancel</button>
               <button className="btn btn-danger" onClick={doReset}>Clear All</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Receipt image viewer ── */}
+      {imageUrl && (
+        <div className="image-viewer-overlay" onClick={() => setImageUrl(null)}>
+          <div className="image-viewer-wrap" onClick={e => e.stopPropagation()}>
+            <button className="image-viewer-close" onClick={() => setImageUrl(null)} title="Close (Esc)">✕</button>
+            <img src={imageUrl} alt="Receipt" className="image-viewer-img" />
           </div>
         </div>
       )}
