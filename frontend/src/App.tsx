@@ -767,16 +767,17 @@ function App() {
                     ))}
                   </defs>
                   <XAxis type="number" hide domain={[0, 'dataMax']} />
-                  <YAxis type="category" dataKey="name" width={116} tick={{ fontSize: 13, fill: '#86868b' }} axisLine={false} tickLine={false} />
+                  <YAxis type="category" dataKey="name" width={116} tick={{ fontSize: 13, fill: darkMode ? '#a0a0ab' : '#86868b' }} axisLine={false} tickLine={false} />
                   <Tooltip content={<CategoryTooltip />} cursor={{ fill: 'rgba(0,0,0,0.03)' }} />
                   <Bar dataKey="value" radius={[0, 7, 7, 0]} isAnimationActive animationDuration={900} animationEasing="ease-out">
                     {rows.map(e => <Cell key={e.name} fill={`url(#grad-${e.name})`} />)}
                     <LabelList
                       dataKey="value"
-                      position="insideRight"
+                      position="insideLeft"
+                      offset={9}
                       formatter={(v: unknown) => {
                         const pct = chartTotal > 0 ? Math.round((Number(v) / chartTotal) * 100) : 0
-                        return pct >= 8 ? `${pct}%` : ''
+                        return pct >= 5 ? `${pct}%` : ''
                       }}
                       style={{ fontSize: 11, fill: 'rgba(255,255,255,0.92)', fontWeight: 700 }}
                     />
@@ -784,7 +785,7 @@ function App() {
                       dataKey="value"
                       position="right"
                       formatter={(v: unknown) => `€${Number(v).toFixed(2)}`}
-                      style={{ fontSize: 12, fill: '#86868b', fontWeight: 500 }}
+                      style={{ fontSize: 12, fill: darkMode ? '#8e8e93' : '#86868b', fontWeight: 500 }}
                     />
                   </Bar>
                 </BarChart>
@@ -800,10 +801,10 @@ function App() {
               </p>
               <ResponsiveContainer width="100%" height={220}>
                 <LineChart data={data.monthly_trend.map(m => ({ ...m, label: formatMonth(m.month) }))} margin={{ top: 8, right: 24, left: 0, bottom: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.05)" />
-                  <XAxis dataKey="label" tick={{ fontSize: 12, fill: '#86868b' }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 12, fill: '#86868b' }} axisLine={false} tickLine={false} tickFormatter={v => `€${v}`} width={52} />
-                  <Tooltip content={<MonthlyTooltip />} cursor={{ stroke: 'rgba(0,0,0,0.06)', strokeWidth: 2 }} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)'} />
+                  <XAxis dataKey="label" tick={{ fontSize: 12, fill: darkMode ? '#a0a0ab' : '#86868b' }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 12, fill: darkMode ? '#a0a0ab' : '#86868b' }} axisLine={false} tickLine={false} tickFormatter={v => `€${v}`} width={52} />
+                  <Tooltip content={<MonthlyTooltip />} cursor={{ stroke: darkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', strokeWidth: 2 }} />
                   <Line
                     type="monotone" dataKey="total" stroke="#3b82f6" strokeWidth={2.5}
                     dot={{ fill: '#3b82f6', r: 4, strokeWidth: 0 }}

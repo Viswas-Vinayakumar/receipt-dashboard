@@ -84,6 +84,23 @@ VALID_CATEGORIES = {
     "Transport", "Health", "Accommodation", "Deposit", "Others"
 }
 
+# ── Item name blacklist ─────────────────────────────────────────────────────
+# AI sometimes extracts total/tax/sum lines as product items — filter them out.
+_ITEM_BLACKLIST = {
+    "summe","gesamtsumme","gesamtbetrag","gesamt","total","endbetrag",
+    "zwischensumme","subtotal","sub-total","grand total","betrag",
+    "zu zahlen","zahlbetrag","rechnungsbetrag","endsumme","nettobetrag",
+    "bruttobetrag","nettosumme","bruttosumme","mwst","ust","mehrwertsteuer",
+    "umsatzsteuer","steuer","tax","vat","rabatt gesamt","gesamtrabatt",
+    "summe eur","summe €","total eur","total €",
+}
+_TOTAL_PREFIXES = ("summe","gesamt","total","endbetrag","zwischensumme","subtotal")
+
+def _is_total_line(name: str) -> bool:
+    """Return True if this looks like a total/tax/sum line rather than a real product."""
+    lower = name.lower().strip()
+    return lower in _ITEM_BLACKLIST or lower.startswith(_TOTAL_PREFIXES)
+
 PROMPT = """You are an expert receipt and bill parser. The image may be a supermarket receipt, restaurant bill, hotel invoice, pharmacy receipt, transport ticket, or any similar financial document. It may be rotated, at an angle, blurry, or partially cut off — do your best regardless.
 
 STEP 1 — Is this a receipt/bill/invoice?
@@ -200,7 +217,8 @@ def _validate_and_fix(data: dict) -> dict:
         item["price"] = _fix_number(item.get("price", 0))
         if item.get("category") not in VALID_CATEGORIES:
             item["category"] = "Others"
-        if item.get("product_name", "").strip():
+        pname = item.get("product_name", "").strip()
+        if pname and not _is_total_line(pname):
             clean_items.append(item)
     data["items"] = clean_items
 

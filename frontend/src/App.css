@@ -1718,7 +1718,7 @@ html.dark #root {
 html.dark h1    { color: #f0f0f5; }
 html.dark h2    { color: #f0f0f5; }
 html.dark h3    { color: #8e8e93; }
-html.dark .subtitle  { color: #636366; }
+html.dark .subtitle  { color: #8e8e93; }
 html.dark .ai-badge  { color: #5aabff; background: rgba(90, 171, 255, 0.12); }
 
 /* Cards */
@@ -1730,7 +1730,7 @@ html.dark .card {
 
 /* Stat cards */
 html.dark .stat-value { color: #f0f0f5; }
-html.dark .stat-sub   { color: #636366; }
+html.dark .stat-sub   { color: #8e8e93; }
 html.dark .top-product-stat-name { color: #f0f0f5; }
 
 /* Header */
@@ -1783,7 +1783,7 @@ html.dark .chart-tab.active {
   color: #f0f0f5;
 }
 html.dark .chart-tab:disabled { color: #48484c; }
-html.dark .chart-subtitle { color: #636366; }
+html.dark .chart-subtitle { color: #8e8e93; }
 html.dark .chart-tip {
   background: rgba(28,28,36,0.96);
   border-color: rgba(255,255,255,0.08);
