@@ -88,7 +88,7 @@ If it IS a receipt, extract all fields accurately.
 Rules:
 1. merchant: The COMPLETE store name as printed in the header, including branch or city suffix (e.g. "Rewe Hauptbahnhof" or "Kaufland Berlin-Heinersdorf").
 2. location: Full street address of the store.
-3. date: Convert any date format to strict ISO 8601 — YYYY-MM-DD only (e.g. "18.05.2026" → "2026-05-18").
+3. date: Convert any date format to strict ISO 8601 — YYYY-MM-DD only (e.g. "18.05.2026" → "2026-05-18"). For two-digit years, always assume the 21st century (e.g. "21.05.26" → "2026-05-21", "16.05.26" → "2026-05-16"). Ignore spaces within dates (e.g. "16 . 05 . 20 26" → "2026-05-16"). We are currently in 2026 so any ambiguous recent year should resolve to 2026.
 4. total_amount: The final amount paid (Summe / Gesamtbetrag / Total / Betrag) as a decimal number. Do NOT include tax breakdown lines.
 5. items: Only individual product line items with their listed price. Exclude payment info, TSE data, tax rows, and subtotals.
 
