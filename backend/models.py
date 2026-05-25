@@ -9,6 +9,7 @@ class Receipt(Base):
     id = Column(Integer, primary_key=True, index=True)
     upload_date = Column(DateTime, default=datetime.datetime.utcnow)
     image_path = Column(String)
+    image_hash = Column(String, nullable=True)  # SHA-256 of original image bytes
     merchant = Column(String)
     location = Column(String)
     date = Column(String) # Date on receipt

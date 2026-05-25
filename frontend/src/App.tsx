@@ -31,6 +31,7 @@ interface DetailReceipt {
 interface ManualItem { product_name: string; category: string; price: string }
 
 interface Toast { message: string; onUndo?: () => void; id: number }
+interface DuplicateInfo { merchant: string; date: string; amount: number; existing_id: number }
 
 interface InsightsData {
   by_store:   { merchant: string; total: number; visits: number }[]
@@ -170,7 +171,7 @@ function App() {
   const [showUpload, setShowUpload]           = useState(false)
   const [uploadMode, setUploadMode]           = useState<UploadMode>('scan')
   const [, setUploadStatus]                   = useState('')
-  const [uploadErr, setUploadErr]             = useState<{ msg: string; isNotReceipt: boolean } | null>(null)
+  const [uploadErr, setUploadErr]             = useState<{ msg: string; isNotReceipt: boolean; isDuplicate?: boolean; dupInfo?: DuplicateInfo } | null>(null)
   const [isDragging, setIsDragging]           = useState(false)
 
   // ── Manual entry form ───────────────────────────────────────────────────
@@ -398,6 +399,21 @@ function App() {
                 isNotReceipt: true
               })
               errs.push('not_a_receipt')
+            } else if (status === 409) {
+              // Exact duplicate
+              try {
+                const dup = JSON.parse(msg)
+                const dateStr = dup.date ? new Date(dup.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''
+                setUploadErr({
+                  msg: `Already uploaded — ${dup.merchant}${dateStr ? `, ${dateStr}` : ''} (€${(dup.amount as number).toFixed(2)})`,
+                  isNotReceipt: false,
+                  isDuplicate: true,
+                  dupInfo: { merchant: dup.merchant, date: dup.date, amount: dup.amount, existing_id: dup.existing_id }
+                })
+              } catch {
+                setUploadErr({ msg: 'This receipt was already uploaded.', isNotReceipt: false, isDuplicate: true })
+              }
+              errs.push('duplicate')
             } else if (status === 429) {
               // Backend returns "rate_limit:<seconds>" — parse it
               const m = msg.match(/rate_limit:(\d+)/)
@@ -413,6 +429,21 @@ function App() {
             }
           } else {
             ok++
+            // Check for possible semantic duplicate warning
+            try {
+              const respText = await res.text()
+              const respJson = JSON.parse(respText)
+              if (respJson.warning === 'possible_duplicate' && respJson.existing) {
+                const e = respJson.existing
+                const dateStr = e.date ? new Date(e.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''
+                setUploadErr({
+                  msg: `Possible duplicate — a ${e.merchant}${dateStr ? ` receipt from ${dateStr}` : ' receipt'} for €${(e.amount as number).toFixed(2)} already exists.`,
+                  isNotReceipt: false,
+                  isDuplicate: true,
+                  dupInfo: { merchant: e.merchant, date: e.date, amount: e.amount, existing_id: e.id }
+                })
+              }
+            } catch { /* response already consumed or not JSON */ }
           }
         } catch (err) {
           errs.push(err instanceof Error ? err.message : `${file.name}: upload failed`)
@@ -928,9 +959,9 @@ function App() {
                 </div>
 
                 {uploadErr && (
-                  <div className="upload-err-block">
+                  <div className={`upload-err-block${uploadErr.isDuplicate ? ' upload-err-dup' : ''}`}>
                     <p className="upload-err-msg">
-                      {uploadErr.isNotReceipt ? '🖼 ' : '⚠ '}{uploadErr.msg}
+                      {uploadErr.isDuplicate ? '🔁 ' : uploadErr.isNotReceipt ? '🖼 ' : '⚠ '}{uploadErr.msg}
                     </p>
                     {uploadErr.isNotReceipt && (
                       <button className="btn btn-secondary" onClick={() => { setUploadErr(null); setUploadMode('manual') }}>

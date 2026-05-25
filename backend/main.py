@@ -5,6 +5,7 @@ import shutil
 import json
 import io
 import time
+import hashlib
 from collections import defaultdict
 from datetime import datetime
 from typing import List
@@ -39,6 +40,27 @@ try:
     logger.info("Database initialized successfully")
 except Exception as e:
     logger.error(f"Database initialization failed: {e}")
+
+# ── Schema migration: add image_hash column if missing ─────────────────────
+try:
+    with engine.connect() as conn:
+        cols = [row[1] for row in conn.execute(
+            __import__('sqlalchemy').text("PRAGMA table_info(receipts)")
+        )]
+        if "image_hash" not in cols:
+            conn.execute(__import__('sqlalchemy').text(
+                "ALTER TABLE receipts ADD COLUMN image_hash VARCHAR"
+            ))
+            conn.commit()
+            logger.info("Migration: added image_hash column")
+        # Partial unique index: NULLs don't conflict, so old rows are safe
+        conn.execute(__import__('sqlalchemy').text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uix_receipts_image_hash "
+            "ON receipts (image_hash) WHERE image_hash IS NOT NULL"
+        ))
+        conn.commit()
+except Exception as e:
+    logger.warning(f"Migration warning: {e}")
 
 app = FastAPI()
 app.add_middleware(
@@ -327,6 +349,23 @@ async def upload_receipt(file: UploadFile = File(...), db: Session = Depends(get
         with open(file_path, "rb") as f:
             image_data = f.read()
 
+        # ── Duplicate check: exact image hash ──────────────────────────────
+        image_hash = hashlib.sha256(image_data).hexdigest()
+        existing = db.query(models.Receipt).filter(
+            models.Receipt.image_hash == image_hash
+        ).first()
+        if existing:
+            try: os.remove(file_path)
+            except Exception: pass
+            logger.info(f"Duplicate detected (hash): receipt #{existing.id}")
+            raise HTTPException(status_code=409, detail=json.dumps({
+                "reason": "exact_duplicate",
+                "existing_id": existing.id,
+                "merchant": existing.merchant or "",
+                "date": existing.date or "",
+                "amount": existing.total_amount or 0,
+            }))
+
         logger.info(f"Calling Ollama ({OLLAMA_MODEL})...")
         raw = call_ollama(image_data)
         logger.info(f"Parsed: {raw}")
@@ -337,8 +376,19 @@ async def upload_receipt(file: UploadFile = File(...), db: Session = Depends(get
             raise HTTPException(status_code=400, detail="not_a_receipt")
 
         extraction = ReceiptExtraction(**raw)
+
+        # ── Duplicate check: same merchant + date + amount ─────────────────
+        semantic_dup = None
+        if extraction.merchant and extraction.date and extraction.total_amount:
+            semantic_dup = db.query(models.Receipt).filter(
+                models.Receipt.merchant == extraction.merchant,
+                models.Receipt.date == extraction.date,
+                models.Receipt.total_amount == extraction.total_amount,
+            ).first()
+
         db_receipt = models.Receipt(
             image_path=file_path,
+            image_hash=image_hash,
             merchant=extraction.merchant,
             location=extraction.location,
             date=extraction.date,
@@ -355,7 +405,18 @@ async def upload_receipt(file: UploadFile = File(...), db: Session = Depends(get
             ))
         db.commit()
         logger.info(f"Saved: {extraction.merchant} €{extraction.total_amount}")
-        return {"status": "success", "data": extraction}
+
+        resp: dict = {"status": "success", "data": extraction.dict()}
+        if semantic_dup:
+            logger.info(f"Possible semantic duplicate of receipt #{semantic_dup.id}")
+            resp["warning"] = "possible_duplicate"
+            resp["existing"] = {
+                "id": semantic_dup.id,
+                "merchant": semantic_dup.merchant or "",
+                "date": semantic_dup.date or "",
+                "amount": semantic_dup.total_amount or 0,
+            }
+        return resp
 
     except HTTPException:
         raise

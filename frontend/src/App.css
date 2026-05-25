@@ -758,6 +758,21 @@ header {
   line-height: 1.5;
 }
 
+.upload-err-dup {
+  background: #f0f4ff;
+  border-color: #c7d2fe;
+}
+.upload-err-dup .upload-err-msg {
+  color: #3730a3;
+}
+html.dark .upload-err-dup {
+  background: rgba(99,102,241,0.12);
+  border-color: rgba(99,102,241,0.35);
+}
+html.dark .upload-err-dup .upload-err-msg {
+  color: #a5b4fc;
+}
+
 /* ── Manual entry form ────────────────────────────────────────────────────── */
 .manual-form { display: flex; flex-direction: column; gap: 16px; }
 
