@@ -91,7 +91,7 @@ function App() {
   const [rateLimitWarn, setRateLimitWarn]     = useState<string | null>(null)
   const [retryAfter, setRetryAfter]           = useState<number | null>(null)
   const [toast, setToast]                     = useState<Toast | null>(null)
-  const [connectionStatus, setConnectionStatus] = useState('Initializing...')
+  const [, setConnectionStatus] = useState('Initializing...')
 
   const retryFilesRef = useRef<File[]>([])
   const retryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -101,6 +101,7 @@ function App() {
   const [uploadMode, setUploadMode]           = useState<UploadMode>('scan')
   const [uploadStatus, setUploadStatus]       = useState('')
   const [uploadErr, setUploadErr]             = useState<{ msg: string; isNotReceipt: boolean } | null>(null)
+  const [isDragging, setIsDragging]           = useState(false)
 
   // ── Manual entry form ───────────────────────────────────────────────────
   const [manualMerchant, setManualMerchant]   = useState('')
@@ -128,6 +129,8 @@ function App() {
   const [insights, setInsights]               = useState<InsightsData | null>(null)
   const [insightTab, setInsightTab]           = useState<InsightTab>('store')
   const [expandedMonths, setExpandedMonths]   = useState<Set<string>>(new Set())
+  const [showEnginePopup, setShowEnginePopup] = useState(false)
+  const engineShownRef                        = useRef(false)
 
   // ── Dark mode ─────────────────────────────────────────────────────────────
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('darkMode') === 'true')
@@ -139,9 +142,15 @@ function App() {
   // ── AI badge (fades in then disappears) ──────────────────────────────────
   const [showAiBadge, setShowAiBadge] = useState(true)
   useEffect(() => {
-    const t = setTimeout(() => setShowAiBadge(false), 3200)
+    const t = setTimeout(() => setShowAiBadge(false), 5000)
     return () => clearTimeout(t)
   }, [])
+
+  useEffect(() => {
+    if (!showEnginePopup) return
+    const t = setTimeout(() => setShowEnginePopup(false), 4000)
+    return () => clearTimeout(t)
+  }, [showEnginePopup])
 
   const fileInputRef   = useRef<HTMLInputElement>(null)
   const undoTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -197,6 +206,10 @@ function App() {
           setData(await res.json())
           setError(null)
           setConnectionStatus('Active')
+          if (!engineShownRef.current) {
+            engineShownRef.current = true
+            setShowEnginePopup(true)
+          }
           try {
             const insRes = await tauriFetch(`${base}/api/insights`)
             if (insRes.ok) setInsights(await insRes.json())
@@ -494,10 +507,6 @@ function App() {
   }
 
   // ── Derived values ───────────────────────────────────────────────────────
-  const isActive    = connectionStatus === 'Active'
-  const isConnErr   = connectionStatus.includes('Failed') || connectionStatus.includes('Blocked') || connectionStatus.includes('Stopped')
-  const dotClass    = isActive ? 'dot-active' : isConnErr ? 'dot-error' : 'dot-warn'
-  const statusColor = isActive ? '#10b981' : isConnErr ? '#ef4444' : '#f59e0b'
   const chartTotal  = data?.category_spend.reduce((s, e) => s + e.value, 0) ?? 0
   const isFiltered  = !!(searchQuery.trim() || filterCategory)
 
@@ -569,13 +578,13 @@ function App() {
       {/* ── Header ── */}
       <header>
         <div className="brand">
-          <div className="logo-wrap">
-            <LogoIcon size={42} />
-            {showAiBadge && <span className="ai-badge">AI powered</span>}
-          </div>
+          <LogoIcon size={42} />
           <div>
             <h1>Rezet</h1>
-            <p className="subtitle">Your spending at a glance</p>
+            <div className="subtitle-row">
+              <p className="subtitle">Your spending at a glance</p>
+              {showAiBadge && <span className="ai-badge">✦ AI powered</span>}
+            </div>
           </div>
         </div>
         <div className="action-bar">
@@ -586,11 +595,8 @@ function App() {
           >{darkMode ? '☀' : '⏾'}</button>
           <button className="btn btn-secondary" onClick={() => setShowResetModal(true)}>Reset</button>
           <button className="btn btn-primary" onClick={() => {
-            if (showUpload) { setShowUpload(false); resetManualForm() }
-            else { setUploadMode('scan'); setUploadErr(null); setShowUpload(true) }
-          }}>
-            {showUpload ? 'Cancel' : '+ New Receipt'}
-          </button>
+            setUploadMode('scan'); setUploadErr(null); setShowUpload(true)
+          }}>+ New Receipt</button>
         </div>
       </header>
 
@@ -639,13 +645,6 @@ function App() {
             const pct = chartTotal > 0 && top ? Math.round((top.value / chartTotal) * 100) : 0
             return <div className="stat-sub">{pct}% of spending</div>
           })()}
-        </div>
-        <div className="card stat-card" style={{ animationDelay: '0.2s' }}>
-          <h3>Engine</h3>
-          <div className="stat-value status-row" style={{ fontSize: '18px', color: statusColor }}>
-            <span className={`status-dot ${dotClass}`} />
-            {connectionStatus}
-          </div>
         </div>
       </div>
 
@@ -716,152 +715,153 @@ function App() {
         </section>
       )}
 
-      {/* ── Upload / Add panel ── */}
+      {/* ── Upload modal ── */}
       {showUpload && (
-        <section className="card upload-card" style={{ animationDelay: '0s' }}>
-          {/* Mode switcher tabs */}
-          <div className="upload-mode-tabs">
-            <button
-              className={`upload-mode-tab${uploadMode === 'scan' ? ' active' : ''}`}
-              onClick={() => { setUploadMode('scan'); setUploadErr(null) }}
-            >📷  Scan Receipt</button>
-            <button
-              className={`upload-mode-tab${uploadMode === 'manual' ? ' active' : ''}`}
-              onClick={() => { setUploadMode('manual'); setUploadErr(null) }}
-            >✏️  Enter Manually</button>
-          </div>
+        <div className="upload-overlay" onClick={e => { if (e.target === e.currentTarget) { setShowUpload(false); resetManualForm() } }}>
+          <div className="upload-modal">
 
-          {/* ── Scan mode ── */}
-          {uploadMode === 'scan' && (
-            <div className="upload-scan-area">
-              <input type="file" ref={fileInputRef} onChange={handleUpload}
-                style={{ display: 'none' }} accept="image/*" multiple />
-              <div
-                className={`upload-zone${loading ? ' loading' : ''}${retryAfter !== null ? ' retrying' : ''}`}
-                onClick={() => !loading && retryAfter === null && fileInputRef.current?.click()}
-              >
-                {retryAfter !== null ? (
-                  <div className="upload-loading">
-                    <div className="retry-ring">
-                      <span className="retry-num">{retryAfter}</span>
+            {/* Modal header */}
+            <div className="upload-modal-header">
+              <h2 className="upload-modal-title">
+                {editingId !== null ? 'Edit Receipt' : 'New Receipt'}
+              </h2>
+              <button className="upload-close-btn" onClick={() => { setShowUpload(false); resetManualForm() }}>✕</button>
+            </div>
+
+            {/* Mode tabs */}
+            <div className="upload-mode-tabs">
+              <button
+                className={`upload-mode-tab${uploadMode === 'scan' ? ' active' : ''}`}
+                onClick={() => { setUploadMode('scan'); setUploadErr(null) }}
+              >📷  Scan</button>
+              <button
+                className={`upload-mode-tab${uploadMode === 'manual' ? ' active' : ''}`}
+                onClick={() => { setUploadMode('manual'); setUploadErr(null) }}
+              >✏️  Manual</button>
+            </div>
+
+            {/* ── Scan mode ── */}
+            {uploadMode === 'scan' && (
+              <div className="upload-scan-area">
+                <input type="file" ref={fileInputRef} onChange={handleUpload}
+                  style={{ display: 'none' }} accept="image/*" multiple />
+                <div
+                  className={`upload-zone${loading ? ' loading' : ''}${retryAfter !== null ? ' retrying' : ''}${isDragging ? ' drag-over' : ''}`}
+                  onClick={() => !loading && retryAfter === null && fileInputRef.current?.click()}
+                  onDragOver={e => { e.preventDefault(); setIsDragging(true) }}
+                  onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragging(false) }}
+                  onDrop={e => {
+                    e.preventDefault(); setIsDragging(false)
+                    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'))
+                    if (files.length) doUploadFiles(files)
+                  }}
+                >
+                  {retryAfter !== null ? (
+                    <div className="upload-loading">
+                      <div className="retry-ring"><span className="retry-num">{retryAfter}</span></div>
+                      <p className="retry-label">Rate limit — retrying in {retryAfter}s</p>
+                      <button className="btn btn-secondary" style={{ marginTop: 8 }}
+                        onClick={e => { e.stopPropagation(); stopRetry() }}>Cancel</button>
                     </div>
-                    <p className="retry-label">Rate limit hit — retrying in {retryAfter}s</p>
-                    <p className="retry-hint">Auto-retry in progress</p>
-                    <button
-                      className="btn btn-secondary"
-                      style={{ marginTop: 4 }}
-                      onClick={e => { e.stopPropagation(); stopRetry() }}
-                    >Cancel</button>
-                  </div>
-                ) : loading ? (
-                  <div className="upload-loading">
-                    <div className="loading-spinner" />
-                    <p>{uploadStatus || 'Analyzing your receipt…'}</p>
-                  </div>
-                ) : (
-                  <>
-                    <div className="upload-icon">↑</div>
-                    <p className="upload-title">Select receipt images</p>
-                    <p className="upload-hint">German &amp; English · Hold ⌘ for multiple</p>
-                  </>
-                )}
-              </div>
-
-              {/* Upload error (non-receipt or other) */}
-              {uploadErr && (
-                <div className="upload-err-block">
-                  <p className="upload-err-msg">
-                    {uploadErr.isNotReceipt ? '🖼 ' : '⚠ '}{uploadErr.msg}
-                  </p>
-                  {uploadErr.isNotReceipt && (
-                    <button
-                      className="btn btn-secondary"
-                      onClick={() => { setUploadErr(null); setUploadMode('manual') }}
-                    >
-                      Enter details manually →
-                    </button>
+                  ) : loading ? (
+                    <div className="upload-loading">
+                      <div className="loading-spinner" />
+                      <p className="upload-analyzing">{uploadStatus || 'Analyzing receipt…'}</p>
+                      <p className="upload-hint-sub">AI is reading your receipt</p>
+                    </div>
+                  ) : (
+                    <div className="upload-idle">
+                      <div className="upload-icon-circle">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/>
+                          <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
+                        </svg>
+                      </div>
+                      <p className="upload-title">{isDragging ? 'Release to scan' : 'Drop your receipt'}</p>
+                      <p className="upload-hint">or <span className="upload-browse-link">click to browse</span></p>
+                      <p className="upload-hint-sub">German & English · JPG, PNG · ⌘ multi-select</p>
+                    </div>
                   )}
                 </div>
-              )}
-            </div>
-          )}
 
-          {/* ── Manual entry mode ── */}
-          {uploadMode === 'manual' && (
-            <div className="manual-form">
-              <div className="form-row">
-                <div className="form-group" style={{ flex: 2 }}>
-                  <label className="form-label">Merchant *</label>
-                  <input className="form-input" placeholder="e.g. Rewe, Kaufland…"
-                    value={manualMerchant} onChange={e => setManualMerchant(e.target.value)} />
-                </div>
-                <div className="form-group" style={{ flex: 1 }}>
-                  <label className="form-label">Date *</label>
-                  <input className="form-input" type="date"
-                    value={manualDate} onChange={e => setManualDate(e.target.value)} />
-                </div>
-              </div>
-              <div className="form-row">
-                <div className="form-group" style={{ flex: 2 }}>
-                  <label className="form-label">Location</label>
-                  <input className="form-input" placeholder="Store address (optional)"
-                    value={manualLocation} onChange={e => setManualLocation(e.target.value)} />
-                </div>
-                <div className="form-group" style={{ flex: 1 }}>
-                  <label className="form-label">Total (€){computedTotal > 0 && !manualTotal && <span className="form-hint"> auto</span>}</label>
-                  <input className="form-input" type="number" step="0.01" min="0" placeholder={computedTotal > 0 ? computedTotal.toFixed(2) : '0.00'}
-                    value={manualTotal} onChange={e => setManualTotal(e.target.value)} />
-                </div>
-              </div>
-
-              {/* Items */}
-              <div className="form-items-header">
-                <span className="form-label">Items <span className="form-hint">(optional)</span></span>
-              </div>
-              <div className="form-items-list">
-                {manualItems.map((item, i) => (
-                  <div key={i} className="form-item-row">
-                    <input
-                      className="form-input item-name"
-                      placeholder="Product name"
-                      value={item.product_name}
-                      onChange={e => updateManualItem(i, 'product_name', e.target.value)}
-                    />
-                    <select
-                      className="form-input item-cat"
-                      value={item.category}
-                      onChange={e => updateManualItem(i, 'category', e.target.value)}
-                    >
-                      {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                    <div className="item-price-wrap">
-                      <span className="item-price-prefix">€</span>
-                      <input
-                        className="form-input item-price"
-                        type="number" step="0.01" min="0" placeholder="0.00"
-                        value={item.price}
-                        onChange={e => updateManualItem(i, 'price', e.target.value)}
-                      />
-                    </div>
-                    <button className="item-remove-btn" onClick={() => removeManualItem(i)} title="Remove">✕</button>
+                {uploadErr && (
+                  <div className="upload-err-block">
+                    <p className="upload-err-msg">
+                      {uploadErr.isNotReceipt ? '🖼 ' : '⚠ '}{uploadErr.msg}
+                    </p>
+                    {uploadErr.isNotReceipt && (
+                      <button className="btn btn-secondary" onClick={() => { setUploadErr(null); setUploadMode('manual') }}>
+                        Enter manually →
+                      </button>
+                    )}
                   </div>
-                ))}
+                )}
               </div>
-              <button className="add-item-btn" onClick={addManualItem}>+ Add Item</button>
+            )}
 
-              <div className="manual-form-footer">
-                <button className="btn btn-secondary" onClick={() => { setShowUpload(false); resetManualForm() }}>Cancel</button>
-                <button
-                  className="btn btn-primary"
-                  disabled={!manualValid || submittingManual}
-                  onClick={handleManualSubmit}
-                >
-                  {submittingManual ? 'Saving…' : editingId !== null ? 'Save Changes' : 'Add Receipt'}
-                </button>
+            {/* ── Manual entry mode ── */}
+            {uploadMode === 'manual' && (
+              <div className="manual-form">
+                <div className="form-row">
+                  <div className="form-group" style={{ flex: 2 }}>
+                    <label className="form-label">Merchant *</label>
+                    <input className="form-input" placeholder="e.g. Rewe, Kaufland…"
+                      value={manualMerchant} onChange={e => setManualMerchant(e.target.value)} />
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label className="form-label">Date *</label>
+                    <input className="form-input" type="date"
+                      value={manualDate} onChange={e => setManualDate(e.target.value)} />
+                  </div>
+                </div>
+                <div className="form-row">
+                  <div className="form-group" style={{ flex: 2 }}>
+                    <label className="form-label">Location</label>
+                    <input className="form-input" placeholder="Store address (optional)"
+                      value={manualLocation} onChange={e => setManualLocation(e.target.value)} />
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label className="form-label">Total (€){computedTotal > 0 && !manualTotal && <span className="form-hint"> auto</span>}</label>
+                    <input className="form-input" type="number" step="0.01" min="0"
+                      placeholder={computedTotal > 0 ? computedTotal.toFixed(2) : '0.00'}
+                      value={manualTotal} onChange={e => setManualTotal(e.target.value)} />
+                  </div>
+                </div>
+
+                <div className="form-items-header">
+                  <span className="form-label">Items <span className="form-hint">(optional)</span></span>
+                </div>
+                <div className="form-items-list">
+                  {manualItems.map((item, i) => (
+                    <div key={i} className="form-item-row">
+                      <input className="form-input item-name" placeholder="Product name"
+                        value={item.product_name} onChange={e => updateManualItem(i, 'product_name', e.target.value)} />
+                      <select className="form-input item-cat" value={item.category}
+                        onChange={e => updateManualItem(i, 'category', e.target.value)}>
+                        {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                      <div className="item-price-wrap">
+                        <span className="item-price-prefix">€</span>
+                        <input className="form-input item-price" type="number" step="0.01" min="0" placeholder="0.00"
+                          value={item.price} onChange={e => updateManualItem(i, 'price', e.target.value)} />
+                      </div>
+                      <button className="item-remove-btn" onClick={() => removeManualItem(i)} title="Remove">✕</button>
+                    </div>
+                  ))}
+                </div>
+                <button className="add-item-btn" onClick={addManualItem}>+ Add Item</button>
+
+                <div className="manual-form-footer">
+                  <button className="btn btn-secondary" onClick={() => { setShowUpload(false); resetManualForm() }}>Cancel</button>
+                  <button className="btn btn-primary" disabled={!manualValid || submittingManual} onClick={handleManualSubmit}>
+                    {submittingManual ? 'Saving…' : editingId !== null ? 'Save Changes' : 'Add Receipt'}
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
-        </section>
+            )}
+
+          </div>
+        </div>
       )}
 
       {/* ── Insights ── */}
@@ -1172,6 +1172,14 @@ function App() {
               <button className="btn btn-danger" onClick={doReset}>Clear All</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Engine ready popup ── */}
+      {showEnginePopup && (
+        <div className="engine-popup">
+          <span className="engine-popup-dot" />
+          <span>AI Engine Ready</span>
         </div>
       )}
 
