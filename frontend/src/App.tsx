@@ -729,23 +729,23 @@ function App() {
 
       {/* ── Stat cards ── */}
       <div className={`dashboard-grid${insights?.by_product?.length ? ' grid-4' : ''}`}>
-        <div className="card stat-card" style={{ animationDelay: '0.05s' }}>
+        <div className="card stat-card stat-card--blue" style={{ animationDelay: '0.05s' }}>
           <h3>Total Spent</h3>
           <div className="stat-value">€{data?.total_spent.toFixed(2) ?? '0.00'}</div>
           {data && data.receipt_count > 0 && (
             <div className="stat-sub">avg €{(data.total_spent / data.receipt_count).toFixed(2)} / receipt</div>
           )}
         </div>
-        <div className="card stat-card" style={{ animationDelay: '0.1s' }}>
+        <div className="card stat-card stat-card--purple" style={{ animationDelay: '0.1s' }}>
           <h3>Receipts</h3>
           <div className="stat-value">{data?.receipt_count ?? 0}</div>
           {data && data.category_spend.length > 0 && (
             <div className="stat-sub">{data.category_spend.length} categories</div>
           )}
         </div>
-        <div className="card stat-card" style={{ animationDelay: '0.15s' }}>
+        <div className="card stat-card stat-card--green" style={{ animationDelay: '0.15s' }}>
           <h3>Top Category</h3>
-          <div className="stat-value category-badge" style={{ fontSize: '20px' }}>
+          <div className="stat-value category-badge" style={{ fontSize: '22px' }}>
             {data?.top_category && data.top_category !== 'N/A' && (
               <span className="cat-dot" style={{ background: catColor(data.top_category) }} />
             )}
@@ -760,7 +760,7 @@ function App() {
 
         {/* ── Top Product stat card ── */}
         {insights?.by_product?.length ? (
-          <div className="card stat-card" style={{ animationDelay: '0.2s' }}>
+          <div className="card stat-card stat-card--orange" style={{ animationDelay: '0.2s' }}>
             <h3>Top Product</h3>
             <div className="top-product-stat">
               <span className="top-product-emoji">{getProductEmoji(insights.by_product[0].name)}</span>

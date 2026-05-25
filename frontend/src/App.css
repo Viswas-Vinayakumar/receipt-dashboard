@@ -1,12 +1,11 @@
 /* ── Reset & Root ─────────────────────────────────────────────────────────── */
 body {
-  background-color: #eef0f6;
+  background-color: #f2f2f7;
   background-image:
-    radial-gradient(ellipse 1100px 700px at -15% -10%, rgba(99,102,241,0.10) 0%, transparent 70%),
-    radial-gradient(ellipse 700px 500px at 115% 115%, rgba(0,113,227,0.08) 0%, transparent 70%),
-    radial-gradient(circle, rgba(99,102,241,0.07) 1px, transparent 1px);
-  background-size: auto, auto, 28px 28px;
-  background-repeat: no-repeat, no-repeat, repeat;
+    radial-gradient(ellipse 1200px 800px at -10% -5%, rgba(0,122,255,0.11) 0%, transparent 60%),
+    radial-gradient(ellipse 900px 700px at 110% 110%, rgba(175,82,222,0.09) 0%, transparent 60%),
+    radial-gradient(ellipse 700px 600px at 50% 130%, rgba(52,199,89,0.06) 0%, transparent 60%);
+  background-repeat: no-repeat;
   min-height: 100vh;
 }
 
@@ -93,9 +92,9 @@ body {
 
 /* ── Typography ───────────────────────────────────────────────────────────── */
 h1 {
-  font-size: 28px;
+  font-size: 26px;
   font-weight: 700;
-  letter-spacing: -0.5px;
+  letter-spacing: -0.3px;
   color: #1d1d1f;
 }
 
@@ -113,11 +112,11 @@ h1 {
 }
 
 h3 {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  color: #86868b;
+  color: #8e8e93;
   text-transform: uppercase;
-  letter-spacing: 0.7px;
+  letter-spacing: 0.8px;
   margin-bottom: 10px;
 }
 
@@ -172,37 +171,48 @@ header {
 
 /* ── Buttons ──────────────────────────────────────────────────────────────── */
 .btn {
-  padding: 9px 18px;
+  padding: 8px 16px;
   border-radius: 10px;
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.16s cubic-bezier(0.4, 0, 0.2, 1);
   border: none;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, #0071e3 0%, #6366f1 100%);
+  background: #007AFF;
   color: white;
-  box-shadow: 0 2px 10px rgba(0, 113, 227, 0.28);
+  border-radius: 20px;
+  padding: 8px 20px;
+  box-shadow: 0 1px 4px rgba(0,122,255,0.30), 0 0 0 0.5px rgba(0,122,255,0.15);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.1px;
 }
 
 .btn-primary:hover {
-  background: linear-gradient(135deg, #0080ff 0%, #6e72f5 100%);
-  transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(0, 113, 227, 0.38);
+  background: #0071E3;
+  transform: translateY(-0.5px);
+  box-shadow: 0 4px 12px rgba(0,122,255,0.35);
+}
+
+.btn-primary:active {
+  transform: scale(0.98);
+  box-shadow: 0 1px 4px rgba(0,122,255,0.25);
 }
 
 .btn-secondary {
-  background: #e8e8ed;
+  background: rgba(118,118,128,0.12);
   color: #1d1d1f;
+  border-radius: 10px;
 }
 
 .btn-secondary:hover {
-  background: #d2d2d7;
+  background: rgba(118,118,128,0.20);
 }
 
 /* ── Banners ───────────────────────────────────────────────────────────────── */
@@ -241,13 +251,13 @@ header {
 
 /* ── Cards ────────────────────────────────────────────────────────────────── */
 .card {
-  background: linear-gradient(160deg, rgba(255,255,255,0.96) 0%, rgba(248,250,255,0.92) 100%);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  border-radius: 20px;
+  background: rgba(255,255,255,0.72);
+  backdrop-filter: blur(40px) saturate(1.8);
+  -webkit-backdrop-filter: blur(40px) saturate(1.8);
+  border-radius: 16px;
   padding: 24px;
-  border: 1px solid rgba(99,102,241,0.09);
-  box-shadow: 0 4px 24px rgba(0,0,0,0.06), 0 1px 4px rgba(0,0,0,0.04);
+  border: 1px solid rgba(255,255,255,0.55);
+  box-shadow: 0 2px 20px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.7);
   animation: fadeInUp 0.4s cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 
@@ -277,14 +287,48 @@ header {
 
 .stat-card {
   padding: 20px 22px;
+  position: relative;
+  overflow: hidden;
 }
 
+/* Colored left accent strip */
+.stat-card::before {
+  content: '';
+  position: absolute;
+  top: 18px;
+  bottom: 18px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+}
+
+.stat-card--blue::before   { background: #007AFF; }
+.stat-card--purple::before { background: #AF52DE; }
+.stat-card--green::before  { background: #34C759; }
+.stat-card--orange::before { background: #FF9500; }
+
+/* Subtle tinted backgrounds */
+.stat-card--blue   { background: rgba(0,122,255,0.06) !important; }
+.stat-card--purple { background: rgba(175,82,222,0.06) !important; }
+.stat-card--green  { background: rgba(52,199,89,0.06) !important; }
+.stat-card--orange { background: rgba(255,149,0,0.08) !important; }
+
+/* Color the stat value accent */
+.stat-card--blue   .stat-value { color: #007AFF; }
+.stat-card--purple .stat-value { color: #8B5CF6; }
+.stat-card--green  .stat-value { color: #16a34a; }
+.stat-card--orange .stat-value { color: #EA580C; }
+
+/* Top Product name inherits orange accent */
+.stat-card--orange .top-product-stat-name { color: #c2410c; }
+
 .stat-value {
-  font-size: 30px;
+  font-size: 34px;
   font-weight: 700;
   color: #1d1d1f;
-  margin-top: 4px;
+  margin-top: 6px;
   line-height: 1.1;
+  letter-spacing: -0.5px;
 }
 
 /* ── Category Badge (Top Category card) ──────────────────────────────────── */
@@ -379,34 +423,36 @@ header {
   margin: -8px 0 12px;
 }
 
-/* Chart tabs */
+/* Chart tabs — macOS segmented control */
 .chart-tabs {
   display: flex;
-  gap: 4px;
-  background: #f5f5f7;
-  border-radius: 8px;
-  padding: 3px;
+  gap: 2px;
+  background: rgba(118,118,128,0.12);
+  border-radius: 9px;
+  padding: 2px;
 }
 
 .chart-tab {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
-  padding: 4px 12px;
-  border-radius: 6px;
+  padding: 5px 14px;
+  border-radius: 7px;
   border: none;
   background: transparent;
-  color: #86868b;
+  color: #636366;
   cursor: pointer;
-  transition: all 0.18s;
+  transition: all 0.16s;
+  letter-spacing: -0.1px;
 }
 
 .chart-tab.active {
-  background: #fff;
+  background: rgba(255,255,255,0.92);
   color: #1d1d1f;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.06);
+  font-weight: 600;
 }
 
-.chart-tab:disabled { opacity: 0.35; cursor: default; }
+.chart-tab:disabled { opacity: 0.30; cursor: default; }
 
 .chart-tip {
   background: #1d1d1f;
@@ -1716,13 +1762,12 @@ tr:last-child td {
 
 /* ── Dark mode ────────────────────────────────────────────────────────────── */
 html.dark body {
-  background-color: #090910;
+  background-color: #000000;
   background-image:
-    radial-gradient(ellipse 1100px 700px at -15% -10%, rgba(99,102,241,0.14) 0%, transparent 70%),
-    radial-gradient(ellipse 700px 500px at 115% 115%, rgba(0,113,227,0.10) 0%, transparent 70%),
-    radial-gradient(circle, rgba(99,102,241,0.10) 1px, transparent 1px);
-  background-size: auto, auto, 28px 28px;
-  background-repeat: no-repeat, no-repeat, repeat;
+    radial-gradient(ellipse 1200px 800px at -10% -5%, rgba(0,122,255,0.20) 0%, transparent 60%),
+    radial-gradient(ellipse 900px 700px at 110% 110%, rgba(175,82,222,0.15) 0%, transparent 60%),
+    radial-gradient(ellipse 700px 600px at 50% 130%, rgba(52,199,89,0.08) 0%, transparent 60%);
+  background-repeat: no-repeat;
   color: #f0f0f5;
 }
 
@@ -1738,9 +1783,11 @@ html.dark .ai-badge  { color: #5aabff; background: rgba(90, 171, 255, 0.12); }
 
 /* Cards */
 html.dark .card {
-  background: linear-gradient(160deg, rgba(28,28,40,0.96) 0%, rgba(22,22,34,0.92) 100%);
-  border-color: rgba(99,102,241,0.12);
-  box-shadow: 0 4px 24px rgba(0,0,0,0.4), 0 1px 4px rgba(0,0,0,0.3);
+  background: rgba(28,28,30,0.75);
+  backdrop-filter: blur(40px) saturate(1.6);
+  -webkit-backdrop-filter: blur(40px) saturate(1.6);
+  border-color: rgba(255,255,255,0.08);
+  box-shadow: 0 4px 30px rgba(0,0,0,0.45), 0 1px 2px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05);
 }
 
 /* Stat cards */
@@ -1748,26 +1795,37 @@ html.dark .stat-value { color: #f0f0f5; }
 html.dark .stat-sub   { color: #8e8e93; }
 html.dark .top-product-stat-name { color: #f0f0f5; }
 
+/* Dark mode colored stat card accents */
+html.dark .stat-card--blue   { background: rgba(0,122,255,0.14) !important; }
+html.dark .stat-card--purple { background: rgba(175,82,222,0.14) !important; }
+html.dark .stat-card--green  { background: rgba(52,199,89,0.14) !important; }
+html.dark .stat-card--orange { background: rgba(255,149,0,0.14) !important; }
+
+html.dark .stat-card--blue   .stat-value { color: #60a5fa; }
+html.dark .stat-card--purple .stat-value { color: #c084fc; }
+html.dark .stat-card--green  .stat-value { color: #4ade80; }
+html.dark .stat-card--orange .stat-value { color: #fb923c; }
+html.dark .stat-card--orange .top-product-stat-name { color: #fdba74; }
+
 /* Header */
 html.dark header { border-color: rgba(255,255,255,0.07); }
 
 /* Buttons */
 html.dark .btn-secondary {
-  background: rgba(255,255,255,0.07);
-  border-color: rgba(255,255,255,0.12);
-  color: #c8c8d0;
+  background: rgba(118,118,128,0.18);
+  color: #e5e5ea;
 }
 html.dark .btn-secondary:hover {
-  background: rgba(255,255,255,0.12);
+  background: rgba(118,118,128,0.26);
   color: #f0f0f5;
 }
 html.dark .btn-icon {
-  background: rgba(255,255,255,0.07);
-  border-color: rgba(255,255,255,0.10);
+  background: rgba(118,118,128,0.18);
+  border-color: rgba(255,255,255,0.08);
   color: #c8c8d0;
 }
 html.dark .btn-icon:hover {
-  background: rgba(255,255,255,0.13);
+  background: rgba(118,118,128,0.26);
   color: #f0f0f5;
 }
 html.dark .btn-export {
@@ -1791,13 +1849,14 @@ html.dark .btn-clear:hover {
 }
 
 /* Chart */
-html.dark .chart-tabs { background: rgba(255,255,255,0.06); }
+html.dark .chart-tabs { background: rgba(118,118,128,0.20); }
 html.dark .chart-tab  { color: #8e8e93; }
 html.dark .chart-tab.active {
-  background: rgba(255,255,255,0.11);
+  background: rgba(255,255,255,0.14);
   color: #f0f0f5;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
 }
-html.dark .chart-tab:disabled { color: #48484c; }
+html.dark .chart-tab:disabled { color: #3a3a3c; }
 html.dark .chart-subtitle { color: #8e8e93; }
 html.dark .chart-tip {
   background: rgba(28,28,36,0.96);
@@ -1922,8 +1981,8 @@ html.dark .rate-limit-banner {
 /* Modal */
 html.dark .modal-overlay { background: rgba(0,0,0,0.7); }
 html.dark .modal {
-  background: #1c1c24;
-  border: 1px solid rgba(255,255,255,0.09);
+  background: #1c1c1e;
+  border: 1px solid rgba(255,255,255,0.10);
 }
 html.dark .modal-title  { color: #f0f0f5; }
 html.dark .modal-body   { color: #8e8e93; }
