@@ -17,7 +17,7 @@ interface DashboardData {
   monthly_trend:  { month: string; total: number }[]
   daily_trend:    { date: string; total: number }[]
   recent_receipts: { id: number; merchant: string; date: string; total_amount: number; category: string; has_image: boolean }[]
-  mom: { current_month: string; current_total: number; prev_month: string; prev_total: number; delta_pct: number | null } | null
+  mom: { current_month: string; current_total: number; current_receipt_count: number; prev_month: string; prev_total: number; delta_pct: number | null } | null
 }
 
 interface DetailReceipt {
@@ -845,17 +845,10 @@ function App() {
       )}
 
       {/* ── Stat cards ── */}
-      <div className={`dashboard-grid${insights?.by_product?.length ? ' grid-4' : ''}`}>
+      <div className={`dashboard-grid${data?.mom ? ' grid-4' : ''}`}>
         <div className="card stat-card stat-card--blue" style={{ animationDelay: '0.05s' }}>
           <h3>Total Spent</h3>
-          <div className="stat-value-row">
-            <div className="stat-value">€{data?.total_spent.toFixed(2) ?? '0.00'}</div>
-            {data?.mom && data.mom.delta_pct !== null && data.mom.prev_total > 0 && (
-              <span className={`mom-badge ${data.mom.delta_pct > 0 ? 'mom-up' : 'mom-down'}`}>
-                {data.mom.delta_pct > 0 ? '↑' : '↓'}{Math.abs(data.mom.delta_pct).toFixed(0)}%
-              </span>
-            )}
-          </div>
+          <div className="stat-value">€{data?.total_spent.toFixed(2) ?? '0.00'}</div>
           {data && data.receipt_count > 0 && (
             <div className="stat-sub">avg €{(data.total_spent / data.receipt_count).toFixed(2)} / receipt · all time</div>
           )}
@@ -882,15 +875,24 @@ function App() {
           })()}
         </div>
 
-        {/* ── Top Product stat card ── */}
-        {insights?.by_product?.length ? (
+        {/* ── This Month stat card ── */}
+        {data?.mom ? (
           <div className="card stat-card stat-card--orange" style={{ animationDelay: '0.2s' }}>
-            <h3>Top Product</h3>
-            <div className="top-product-stat">
-              <span className="top-product-emoji">{getProductEmoji(insights.by_product[0].name)}</span>
-              <span className="top-product-stat-name">{insights.by_product[0].name}</span>
+            <h3>This Month</h3>
+            <div className="stat-value-row">
+              <div className="stat-value">€{data.mom.current_total.toFixed(2)}</div>
+              {data.mom.delta_pct !== null && data.mom.prev_total > 0 && (
+                <span className={`mom-badge ${data.mom.delta_pct > 0 ? 'mom-up' : 'mom-down'}`}>
+                  {data.mom.delta_pct > 0 ? '↑' : '↓'}{Math.abs(data.mom.delta_pct).toFixed(0)}%
+                </span>
+              )}
             </div>
-            <div className="stat-sub">€{insights.by_product[0].total.toFixed(2)} · ×{insights.by_product[0].count}</div>
+            <div className="stat-sub">
+              {data.mom.current_receipt_count} receipt{data.mom.current_receipt_count !== 1 ? 's' : ''}
+              {data.mom.current_receipt_count > 0 && data.mom.current_total > 0
+                ? ` · €${(data.mom.current_total / data.mom.current_receipt_count).toFixed(2)} avg`
+                : ''}
+            </div>
           </div>
         ) : null}
       </div>
@@ -1241,7 +1243,7 @@ function App() {
                     return (
                       <div key={p.name} className="insight-row" style={{ animationDelay: `${i * 0.04}s` }}>
                         <div className="insight-row-header">
-                          <span className="insight-name">{p.name}</span>
+                          <span className="insight-name"><span style={{ marginRight: 6, opacity: 0.8 }}>{getProductEmoji(p.name)}</span>{p.name}</span>
                           <div className="insight-row-right">
                             <span className="insight-badge">×{p.count}</span>
                             <span className="insight-amount">€{p.total.toFixed(2)}</span>

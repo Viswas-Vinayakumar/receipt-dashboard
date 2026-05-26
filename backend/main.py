@@ -555,8 +555,10 @@ async def get_dashboard_data(db: Session = Depends(get_db)):
     _now = datetime.now()
     current_month_str = _now.strftime("%Y-%m")
     prev_month_str = f"{_now.year - 1}-12" if _now.month == 1 else f"{_now.year}-{str(_now.month - 1).zfill(2)}"
-    current_month_total = sum(r.total_amount for r in receipts if r.date and r.date[:7] == current_month_str)
-    prev_month_total    = sum(r.total_amount for r in receipts if r.date and r.date[:7] == prev_month_str)
+    current_month_receipts = [r for r in receipts if r.date and r.date[:7] == current_month_str]
+    current_month_total    = sum(r.total_amount for r in current_month_receipts)
+    current_receipt_count  = len(current_month_receipts)
+    prev_month_total       = sum(r.total_amount for r in receipts if r.date and r.date[:7] == prev_month_str)
     mom_delta_pct = round(((current_month_total - prev_month_total) / prev_month_total) * 100, 1) \
                     if prev_month_total > 0 else None
 
@@ -581,11 +583,12 @@ async def get_dashboard_data(db: Session = Depends(get_db)):
             }
             for r in receipts],
         "mom": {
-            "current_month": current_month_str,
-            "current_total": round(current_month_total, 2),
-            "prev_month":    prev_month_str,
-            "prev_total":    round(prev_month_total, 2),
-            "delta_pct":     mom_delta_pct
+            "current_month":         current_month_str,
+            "current_total":         round(current_month_total, 2),
+            "current_receipt_count": current_receipt_count,
+            "prev_month":            prev_month_str,
+            "prev_total":            round(prev_month_total, 2),
+            "delta_pct":             mom_delta_pct
         }
     }
 
@@ -689,9 +692,17 @@ async def get_insights(db: Session = Depends(get_db)):
         key=lambda x: x["total"], reverse=True
     )[:30]
 
-    # ── By month ──────────────────────────────────────────────────────────────
+    # ── By month (rolling 12 months — matches the trend chart window) ────────
+    _ins_now      = datetime.now()
+    _ins_cy       = _ins_now.year - 1 if _ins_now.month > 1 else _ins_now.year - 2
+    _ins_cm       = _ins_now.month - 1 if _ins_now.month > 1 else 12
+    _ins_cutoff   = f"{_ins_cy}-{str(_ins_cm).zfill(2)}"
+
     month_product: dict = defaultdict(lambda: defaultdict(float))
-    receipt_month: dict = {r.id: r.date[:7] for r in receipts if r.date and len(r.date) >= 7}
+    receipt_month: dict = {
+        r.id: r.date[:7] for r in receipts
+        if r.date and len(r.date) >= 7 and r.date[:7] >= _ins_cutoff
+    }
 
     for item in items:
         if not item.product_name or _is_total_line(item.product_name):
@@ -703,7 +714,7 @@ async def get_insights(db: Session = Depends(get_db)):
     # Also include months that have receipts but no items
     receipt_month_totals: dict = defaultdict(float)
     for r in receipts:
-        if r.date and len(r.date) >= 7:
+        if r.date and len(r.date) >= 7 and r.date[:7] >= _ins_cutoff:
             receipt_month_totals[r.date[:7]] += r.total_amount
 
     by_month = sorted([
