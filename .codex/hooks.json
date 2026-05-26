@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /Users/viswasvinayakumar/receipt-dashboard && git add -A && git diff --cached --quiet || git commit -m \"auto: sync changes $(date '+%Y-%m-%d %H:%M')\" && git push origin main 2>/dev/null || true",
+            "statusMessage": "Syncing changes to GitHub..."
+          }
+        ]
+      }
+    ]
+  }
+}

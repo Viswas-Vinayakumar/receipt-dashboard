@@ -857,7 +857,7 @@ function App() {
             )}
           </div>
           {data && data.receipt_count > 0 && (
-            <div className="stat-sub">avg €{(data.total_spent / data.receipt_count).toFixed(2)} / receipt</div>
+            <div className="stat-sub">avg €{(data.total_spent / data.receipt_count).toFixed(2)} / receipt · all time</div>
           )}
         </div>
         <div className="card stat-card stat-card--purple" style={{ animationDelay: '0.1s' }}>
@@ -914,7 +914,7 @@ function App() {
       {hasChart && (
         <section className="card chart-card" style={{ animationDelay: '0.25s' }}>
           <div className="chart-header">
-            <h3>{chartTab === 'category' ? 'Spending by Category' : (data && data.monthly_trend.length <= 1 && (data.daily_trend?.length ?? 0) > 0 ? 'Daily Spending' : 'Monthly Spending')}</h3>
+            <h3>{chartTab === 'category' ? 'Spending by Category' : (data && data.monthly_trend.length <= 1 && (data.daily_trend?.length ?? 0) > 0 ? 'This Month · Daily' : '12-Month Trend')}</h3>
             <div className="chart-tabs">
               <button
                 className={`chart-tab${chartTab === 'category' ? ' active' : ''}`}
@@ -924,7 +924,7 @@ function App() {
                 className={`chart-tab${chartTab === 'monthly' ? ' active' : ''}`}
                 onClick={() => setChartTab('monthly')}
                 disabled={!data?.monthly_trend.length && !data?.daily_trend?.length}
-              >{data && data.monthly_trend.length <= 1 && (data.daily_trend?.length ?? 0) > 0 ? 'Daily' : 'Monthly'}</button>
+              >{data && data.monthly_trend.length <= 1 && (data.daily_trend?.length ?? 0) > 0 ? 'Daily' : 'Trend'}</button>
             </div>
           </div>
 
@@ -980,8 +980,8 @@ function App() {
               <>
                 <p className="chart-subtitle">
                   {useDaily
-                    ? `${data.daily_trend.length} day${data.daily_trend.length !== 1 ? 's' : ''} · €${totalSpend.toFixed(2)} total`
-                    : `${data.monthly_trend.length} month${data.monthly_trend.length !== 1 ? 's' : ''} · €${totalSpend.toFixed(2)} total`
+                    ? `${data.daily_trend.length} day${data.daily_trend.length !== 1 ? 's' : ''} this month · €${totalSpend.toFixed(2)}`
+                    : `${data.monthly_trend.length} month${data.monthly_trend.length !== 1 ? 's' : ''} · €${totalSpend.toFixed(2)} · rolling 12 months`
                   }
                 </p>
                 <ResponsiveContainer width="100%" height={220}>

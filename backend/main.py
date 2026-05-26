@@ -525,12 +525,25 @@ async def get_dashboard_data(db: Session = Depends(get_db)):
         rc = receipt_categories.setdefault(item.receipt_id, {})
         rc[item.category] = rc.get(item.category, 0.0) + item.price
 
+    # Rolling 12-month window — receipts older than 12 months ago are excluded
+    # from the trend chart so stale/test data doesn't distort the timeline.
+    _now_dt        = datetime.now()
+    _current_month = _now_dt.strftime("%Y-%m")
+    # First day of the month 12 months ago, expressed as "YYYY-MM"
+    _cutoff_year   = _now_dt.year - 1 if _now_dt.month > 1 else _now_dt.year - 2
+    _cutoff_month  = _now_dt.month - 1 if _now_dt.month > 1 else 12
+    _cutoff        = f"{_cutoff_year}-{str(_cutoff_month).zfill(2)}"
+
     daily: dict = defaultdict(float)
     for r in receipts:
         if r.date and len(r.date) >= 7:
-            monthly[r.date[:7]] += r.total_amount
+            # Only include months within the rolling 12-month window
+            if r.date[:7] >= _cutoff:
+                monthly[r.date[:7]] += r.total_amount
         if r.date and len(r.date) == 10:
-            daily[r.date] += r.total_amount
+            # Daily trend shows current month only (granular "this month" view)
+            if r.date[:7] == _current_month:
+                daily[r.date] += r.total_amount
 
     top_cat = max(category_data, key=lambda c: category_data[c]["amount"]) if category_data else "N/A"
 
