@@ -39,10 +39,12 @@ OLLAMA_MODEL = "gemma4:e4b"
 
 # NVIDIA NIM (OpenAI-compatible) free cloud vision API
 NVIDIA_BASE_URL  = "https://integrate.api.nvidia.com/v1"
-# Default → best for German/European receipts (great multilingual OCR)
-NVIDIA_MODEL     = "qwen/qwen2.5-vl-72b-instruct"
-NVIDIA_MODEL_ALT = "meta/llama-3.2-90b-vision-instruct"   # strong general vision
-NVIDIA_MODEL_FAST = "microsoft/phi-3.5-vision-instruct"   # faster, lighter
+# Default → reliably-free vision model (Llama 3.2 90B Vision). Qwen 3.5 VLM is newer/better
+# but availability on free tier shifts; users can switch via Settings.
+NVIDIA_MODEL      = "meta/llama-3.2-90b-vision-instruct"
+NVIDIA_MODEL_QWEN_NEW = "qwen/qwen3.5-397b-a17b"           # newest Qwen VLM (best if free for you)
+NVIDIA_MODEL_QWEN_OLD = "qwen/qwen2.5-vl-72b-instruct"     # older but solid for German OCR
+NVIDIA_MODEL_FAST = "microsoft/phi-3.5-vision-instruct"    # fastest
 
 # Settings file — persists user's chosen engine + NVIDIA API key
 SETTINGS_PATH = os.path.expanduser("~/receipt-dashboard/app_data/settings.json")
@@ -488,9 +490,10 @@ async def get_settings():
             {"id": "nvidia", "label": "NVIDIA Cloud (fast)", "needs_key": True},
         ],
         "available_nvidia_models": [
-            {"id": NVIDIA_MODEL,      "label": "Qwen 2.5-VL 72B  ·  best for German receipts"},
-            {"id": NVIDIA_MODEL_ALT,  "label": "Llama 3.2 90B Vision  ·  strong all-rounder"},
-            {"id": NVIDIA_MODEL_FAST, "label": "Phi 3.5 Vision  ·  fastest"},
+            {"id": NVIDIA_MODEL,           "label": "Llama 3.2 90B Vision  ·  reliably free"},
+            {"id": NVIDIA_MODEL_QWEN_NEW,  "label": "Qwen 3.5 VLM 397B  ·  newest, best quality"},
+            {"id": NVIDIA_MODEL_QWEN_OLD,  "label": "Qwen 2.5-VL 72B  ·  great for German"},
+            {"id": NVIDIA_MODEL_FAST,      "label": "Phi 3.5 Vision  ·  fastest"},
         ],
     }
 
