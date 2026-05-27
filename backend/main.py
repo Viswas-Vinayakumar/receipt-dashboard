@@ -1042,4 +1042,6 @@ if __name__ == "__main__":
     except Exception:
         pass
 
-    uvicorn.run(app, host="127.0.0.1", port=8888)
+    # Bind to 0.0.0.0 so the phone can reach the backend over WiFi.
+    # On the desktop app, localhost still works fine because 0.0.0.0 listens on all interfaces.
+    uvicorn.run(app, host="0.0.0.0", port=8888)

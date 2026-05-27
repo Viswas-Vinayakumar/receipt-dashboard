@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { Command } from '@tauri-apps/plugin-shell'
-import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
+import { apiFetch, isMobile, isTauri, getBackendUrl, setBackendUrl } from './api'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, Cell, LabelList,
@@ -205,6 +204,8 @@ function App() {
   const [detailReceipt, setDetailReceipt]     = useState<DetailReceipt | null>(null)
   const [loadingDetail, setLoadingDetail]     = useState(false)
   const [showResetModal, setShowResetModal]   = useState(false)
+  const [showSettings, setShowSettings]       = useState(false)
+  const [backendUrlInput, setBackendUrlInput] = useState(getBackendUrl())
 
   // ── Table controls ──────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery]         = useState('')
@@ -335,30 +336,28 @@ function App() {
 
   // ── Fetch dashboard data ─────────────────────────────────────────────────
   const fetchData = async () => {
-    for (const base of ['http://127.0.0.1:8888', 'http://localhost:8888']) {
-      try {
-        const res = await tauriFetch(`${base}/api/dashboard`)
-        if (res.ok) {
-          setData(await res.json())
-          setError(null)
-          setConnectionStatus('Active')
-          if (!engineShownRef.current) {
-            engineShownRef.current = true
-            setShowEnginePopup(true)
-          }
-          try {
-            const insRes = await tauriFetch(`${base}/api/insights`)
-            if (insRes.ok) setInsights(await insRes.json())
-          } catch {}
-          try {
-            const anlRes = await tauriFetch(`${base}/api/analytics`)
-            if (anlRes.ok) setAnalytics(await anlRes.json())
-          } catch {}
-          return
+    try {
+      const res = await apiFetch('/api/dashboard')
+      if (res.ok) {
+        setData(await res.json())
+        setError(null)
+        setConnectionStatus('Active')
+        if (!engineShownRef.current) {
+          engineShownRef.current = true
+          setShowEnginePopup(true)
         }
-      } catch {}
-    }
-    setConnectionStatus('Waiting...')
+        try {
+          const insRes = await apiFetch('/api/insights')
+          if (insRes.ok) setInsights(await insRes.json())
+        } catch {}
+        try {
+          const anlRes = await apiFetch('/api/analytics')
+          if (anlRes.ok) setAnalytics(await anlRes.json())
+        } catch {}
+        return
+      }
+    } catch {}
+    setConnectionStatus(isMobile ? `Can't reach ${getBackendUrl()}` : 'Waiting...')
   }
 
   // ── Sidecar lifecycle ────────────────────────────────────────────────────
@@ -366,11 +365,33 @@ function App() {
     let started = false
     let cancelled = false
 
+    // On mobile (Capacitor) there is no sidecar — backend runs on the user's Mac.
+    // Just poll the configured backend URL until it answers.
+    if (isMobile || !isTauri) {
+      const pollMobile = async () => {
+        setConnectionStatus('Connecting to backend…')
+        for (let i = 0; i < 30 && !cancelled; i++) {
+          try {
+            const res = await apiFetch('/api/health')
+            if (res.ok) { setConnectionStatus('Active'); fetchData(); return }
+          } catch {}
+          await new Promise(r => setTimeout(r, 1500))
+        }
+        if (!cancelled) {
+          setConnectionStatus(`Can't reach ${getBackendUrl()}`)
+          setError(`Couldn't reach the backend at ${getBackendUrl()}.\n\nMake sure:\n• Your Mac is on and running the Rezet desktop app (or backend)\n• Your phone is on the same WiFi network as your Mac\n• You set the correct Mac LAN IP in Settings (⚙ icon)`)
+        }
+      }
+      pollMobile()
+      return () => { cancelled = true }
+    }
+
     const startBackend = async () => {
       if (started || cancelled) return
       started = true
       try {
         setConnectionStatus('Starting AI Engine...')
+        const { Command } = await import('@tauri-apps/plugin-shell')
         const command = Command.sidecar('backend')
         command.stdout.on('data', (l: string) => console.log('[backend]', l))
         command.stderr.on('data', (l: string) => console.warn('[backend]', l))
@@ -382,7 +403,7 @@ function App() {
           await new Promise(r => setTimeout(r, 1500))
           if (cancelled) return
           try {
-            const res = await tauriFetch('http://127.0.0.1:8888/api/health')
+            const res = await apiFetch('/api/health')
             if (res.ok) { setConnectionStatus('Active'); fetchData(); return }
           } catch {}
           setConnectionStatus('Engine Stopped')
@@ -402,7 +423,7 @@ function App() {
           if (cancelled) return
           setConnectionStatus(`Connecting (${i + 1}/45)…`)
           try {
-            const res = await tauriFetch('http://127.0.0.1:8888/api/health')
+            const res = await apiFetch('/api/health')
             if (res.ok) { connected = true; break }
           } catch {}
           await new Promise(r => setTimeout(r, 1000))
@@ -450,7 +471,7 @@ function App() {
           const buf  = await file.arrayBuffer()
           const form = new FormData()
           form.append('file', new Blob([buf], { type: file.type || 'image/jpeg' }), file.name)
-          const res = await tauriFetch('http://127.0.0.1:8888/api/upload', { method: 'POST', body: form })
+          const res = await apiFetch('/api/upload', { method: 'POST', body: form })
           const { msg, status, json: respJson } = await parseResponse(res)
 
           if (!res.ok) {
@@ -582,9 +603,9 @@ function App() {
           price:        parseFloat(i.price)
         }))
       }
-      const url    = editingId !== null ? `http://127.0.0.1:8888/api/receipts/${editingId}` : 'http://127.0.0.1:8888/api/receipts/manual'
+      const url    = editingId !== null ? `/api/receipts/${editingId}` : '/api/receipts/manual'
       const method = editingId !== null ? 'PUT' : 'POST'
-      const res    = await tauriFetch(url, {
+      const res    = await apiFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -609,7 +630,7 @@ function App() {
     setData({ ...data, recent_receipts: data.recent_receipts.filter(r => r.id !== id) })
     const timer = setTimeout(async () => {
       try {
-        const res = await tauriFetch(`http://127.0.0.1:8888/api/receipts/${id}`, { method: 'DELETE' })
+        const res = await apiFetch(`/api/receipts/${id}`, { method: 'DELETE' })
         if (!res.ok) throw new Error()
         await fetchData()
       } catch {
@@ -629,7 +650,7 @@ function App() {
   const doReset = async () => {
     setShowResetModal(false)
     try {
-      const res = await tauriFetch('http://127.0.0.1:8888/api/reset', { method: 'POST' })
+      const res = await apiFetch('/api/reset', { method: 'POST' })
       if (!res.ok) throw new Error()
       setSearchQuery(''); setFilterCategory('')
       await fetchData(); showToast('All data cleared')
@@ -640,7 +661,7 @@ function App() {
   const handleRowClick = async (id: number) => {
     setLoadingDetail(true); setDetailReceipt(null)
     try {
-      const res = await tauriFetch(`http://127.0.0.1:8888/api/receipts/${id}`)
+      const res = await apiFetch(`/api/receipts/${id}`)
       if (res.ok) {
         setDetailReceipt(await res.json())
       } else {
@@ -654,7 +675,7 @@ function App() {
   const handleViewImage = async (id: number) => {
     setLoadingImage(true)
     try {
-      const res = await tauriFetch(`http://127.0.0.1:8888/api/receipts/${id}/image`)
+      const res = await apiFetch(`/api/receipts/${id}/image`)
       if (res.ok) {
         const { data, mime } = await res.json()
         setImageUrl(`data:${mime};base64,${data}`)
@@ -821,6 +842,11 @@ function App() {
             onClick={() => setDarkMode(d => !d)}
             title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
           >{darkMode ? '☀' : '⏾'}</button>
+          <button
+            className="btn btn-icon"
+            onClick={() => { setBackendUrlInput(getBackendUrl()); setShowSettings(true) }}
+            title="Backend settings"
+          >⚙</button>
           <button className="btn btn-secondary" onClick={() => setShowResetModal(true)}>Reset</button>
           <button className="btn btn-primary" onClick={() => {
             setUploadMode('scan'); setUploadErr(null); setShowUpload(true)
@@ -1699,6 +1725,46 @@ function App() {
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setShowResetModal(false)}>Cancel</button>
               <button className="btn btn-danger" onClick={doReset}>Clear All</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Backend settings modal ── */}
+      {showSettings && (
+        <div className="modal-overlay" onClick={() => setShowSettings(false)}>
+          <div className="modal settings-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-icon">⚙️</div>
+            <h2 className="modal-title">Backend Connection</h2>
+            <p className="modal-body">
+              {isMobile
+                ? 'Set your Mac\'s LAN IP so this app can reach the Rezet backend running on your Mac. Make sure both devices are on the same WiFi.'
+                : 'The desktop app uses its built-in backend. Only change this if you\'re pointing to a remote server.'}
+            </p>
+            <input
+              type="text"
+              className="form-input settings-url-input"
+              value={backendUrlInput}
+              onChange={e => setBackendUrlInput(e.target.value)}
+              placeholder="http://192.168.1.42:8888"
+              autoFocus
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+            />
+            <p className="settings-hint">
+              Find your Mac's IP: <strong>System Settings → Network → Wi-Fi → Details</strong> (e.g. <code>192.168.1.42</code>).
+              Then enter <code>http://YOUR_IP:8888</code> above.
+            </p>
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => setShowSettings(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={() => {
+                setBackendUrl(backendUrlInput)
+                setShowSettings(false)
+                setError(null)
+                setConnectionStatus('Connecting…')
+                setTimeout(() => fetchData(), 100)
+              }}>Save & Connect</button>
             </div>
           </div>
         </div>

@@ -2896,6 +2896,102 @@ html.dark .anl-correction-chip { background: rgba(175,82,222,0.16); color: #c084
   opacity: 0.7;
 }
 
+/* ── Mobile / Touch ──────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  #root {
+    padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+             max(20px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  }
+
+  /* Stack header vertically on phones, full-width buttons */
+  header {
+    flex-direction: column;
+    align-items: stretch !important;
+    gap: 14px;
+  }
+  .action-bar {
+    display: grid;
+    grid-template-columns: auto auto 1fr 1fr;
+    gap: 8px;
+    width: 100%;
+  }
+  .action-bar .btn-primary,
+  .action-bar .btn-secondary { width: 100%; }
+
+  /* Tap-target minimum 44×44 */
+  .btn, .btn-icon, .chart-tab, .insight-row {
+    min-height: 44px;
+  }
+
+  /* Stat cards full-width on phones — 2 cols below 640, 1 col below 420 */
+  .dashboard-grid,
+  .dashboard-grid.grid-4 { grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  .stat-card { padding: 16px 18px; }
+  .stat-value { font-size: 26px; }
+
+  /* Charts shrink */
+  .chart-card { padding: 16px; }
+  h1 { font-size: 22px; }
+
+  /* Insights chips scroll horizontally */
+  .stat-chips-row {
+    -webkit-overflow-scrolling: touch;
+    margin: 0 -16px;
+    padding: 2px 16px;
+  }
+
+  /* Table on mobile: card-style rows */
+  thead { display: none; }
+  .tx-row, tbody tr {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 4px 12px;
+    padding: 14px 12px;
+    border-radius: 12px;
+    margin-bottom: 8px;
+    background: rgba(255,255,255,0.5);
+    border: 1px solid rgba(0,0,0,0.06);
+  }
+  .tx-row td { padding: 0 !important; border: none !important; }
+}
+
+@media (max-width: 420px) {
+  .dashboard-grid,
+  .dashboard-grid.grid-4 { grid-template-columns: 1fr; }
+}
+
+html.dark .tx-row { background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.06); }
+
+/* ── Settings Modal ──────────────────────────────────────────────────────── */
+.settings-modal { max-width: 460px; }
+
+.settings-url-input {
+  margin-top: 16px;
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font-size: 14px;
+}
+
+.settings-hint {
+  margin: 14px 0 4px;
+  font-size: 12px;
+  color: #86868b;
+  line-height: 1.55;
+}
+
+.settings-hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font-size: 11px;
+  padding: 1px 6px;
+  background: rgba(0,0,0,0.06);
+  border-radius: 4px;
+  color: #1d1d1f;
+}
+
+html.dark .settings-hint      { color: #8e8e93; }
+html.dark .settings-hint code { background: rgba(255,255,255,0.08); color: #e5e5ea; }
+
 /* ── Print stylesheet ─────────────────────────────────────────────────────── */
 @media print {
   body { background: white; }
