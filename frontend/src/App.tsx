@@ -208,11 +208,15 @@ function App() {
   const [showResetModal, setShowResetModal]   = useState(false)
   const [showSettings, setShowSettings]       = useState(false)
   const [backendUrlInput, setBackendUrlInput] = useState(getBackendUrl())
-  const [engineInput, setEngineInput]         = useState<'ollama' | 'nvidia'>('ollama')
+  const [engineInput, setEngineInput]         = useState<'ollama' | 'nvidia' | 'gemini'>('ollama')
   const [nvidiaKeyInput, setNvidiaKeyInput]   = useState('')
-  const [nvidiaModelInput, setNvidiaModelInput] = useState('meta/llama-3.2-90b-vision-instruct')
-  const [savedKeyPreview, setSavedKeyPreview] = useState('')
-  const [availableModels, setAvailableModels] = useState<{id:string,label:string}[]>([])
+  const [nvidiaModelInput, setNvidiaModelInput] = useState('microsoft/phi-3.5-vision-instruct')
+  const [geminiKeyInput, setGeminiKeyInput]   = useState('')
+  const [geminiModelInput, setGeminiModelInput] = useState('gemini-2.0-flash')
+  const [savedNvidiaKeyPreview, setSavedNvidiaKeyPreview] = useState('')
+  const [savedGeminiKeyPreview, setSavedGeminiKeyPreview] = useState('')
+  const [availableNvidiaModels, setAvailableNvidiaModels] = useState<{id:string,label:string}[]>([])
+  const [availableGeminiModels, setAvailableGeminiModels] = useState<{id:string,label:string}[]>([])
   const [savingSettings, setSavingSettings]   = useState(false)
 
   // ── Table controls ──────────────────────────────────────────────────────
@@ -267,10 +271,14 @@ function App() {
     apiFetch('/api/settings').then(r => r.ok ? r.json() : null).then(s => {
       if (!s) return
       setEngineInput(s.engine || 'ollama')
-      setNvidiaModelInput(s.nvidia_model || 'meta/llama-3.2-90b-vision-instruct')
-      setSavedKeyPreview(s.nvidia_key_preview || '')
-      setAvailableModels(s.available_nvidia_models || [])
-      setNvidiaKeyInput('')   // never prefill key — only show preview
+      setNvidiaModelInput(s.nvidia_model || 'microsoft/phi-3.5-vision-instruct')
+      setGeminiModelInput(s.gemini_model || 'gemini-2.0-flash')
+      setSavedNvidiaKeyPreview(s.nvidia_key_preview || '')
+      setSavedGeminiKeyPreview(s.gemini_key_preview || '')
+      setAvailableNvidiaModels(s.available_nvidia_models || [])
+      setAvailableGeminiModels(s.available_gemini_models || [])
+      setNvidiaKeyInput('')
+      setGeminiKeyInput('')
     }).catch(() => {})
   }, [showSettings])
 
@@ -1812,25 +1820,68 @@ function App() {
             {/* ── AI engine ── */}
             <div className="settings-section">
               <div className="settings-section-label">AI Engine</div>
-              <div className="settings-segmented">
+              <div className="settings-segmented settings-segmented-3">
                 <button
                   className={`settings-seg ${engineInput === 'ollama' ? 'active' : ''}`}
                   onClick={() => setEngineInput('ollama')}
-                ><strong>Ollama</strong><span>Local · Slower · Private</span></button>
+                ><strong>Ollama</strong><span>Local · Private · Slow</span></button>
+                <button
+                  className={`settings-seg ${engineInput === 'gemini' ? 'active' : ''}`}
+                  onClick={() => setEngineInput('gemini')}
+                ><strong>Gemini</strong><span>EU-OK · Free 1500/day</span></button>
                 <button
                   className={`settings-seg ${engineInput === 'nvidia' ? 'active' : ''}`}
                   onClick={() => setEngineInput('nvidia')}
-                ><strong>NVIDIA Cloud</strong><span>Fast · Free tier</span></button>
+                ><strong>NVIDIA</strong><span>Fast · Some EU-blocked</span></button>
               </div>
             </div>
+
+            {engineInput === 'gemini' && (
+              <>
+                <div className="settings-section">
+                  <div className="settings-section-label">
+                    Gemini API Key
+                    {savedGeminiKeyPreview && (
+                      <span className="settings-saved-tag">Saved: {savedGeminiKeyPreview}</span>
+                    )}
+                  </div>
+                  <input
+                    type="password"
+                    className="form-input settings-url-input"
+                    value={geminiKeyInput}
+                    onChange={e => setGeminiKeyInput(e.target.value)}
+                    placeholder={savedGeminiKeyPreview ? "(leave empty to keep existing)" : "AIzaSy..."}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                  />
+                  <p className="settings-hint">
+                    Get a free key at <code>aistudio.google.com/apikey</code> → "Create API Key". Works in Germany. 1500 requests/day free.
+                  </p>
+                </div>
+
+                <div className="settings-section">
+                  <div className="settings-section-label">Model</div>
+                  <select
+                    className="form-input settings-url-input"
+                    value={geminiModelInput}
+                    onChange={e => setGeminiModelInput(e.target.value)}
+                  >
+                    {availableGeminiModels.map(m => (
+                      <option key={m.id} value={m.id}>{m.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
 
             {engineInput === 'nvidia' && (
               <>
                 <div className="settings-section">
                   <div className="settings-section-label">
                     NVIDIA API Key
-                    {savedKeyPreview && (
-                      <span className="settings-saved-tag">Saved: {savedKeyPreview}</span>
+                    {savedNvidiaKeyPreview && (
+                      <span className="settings-saved-tag">Saved: {savedNvidiaKeyPreview}</span>
                     )}
                   </div>
                   <input
@@ -1838,13 +1889,13 @@ function App() {
                     className="form-input settings-url-input"
                     value={nvidiaKeyInput}
                     onChange={e => setNvidiaKeyInput(e.target.value)}
-                    placeholder={savedKeyPreview ? "(leave empty to keep existing)" : "nvapi-..."}
+                    placeholder={savedNvidiaKeyPreview ? "(leave empty to keep existing)" : "nvapi-..."}
                     autoCapitalize="none"
                     autoCorrect="off"
                     spellCheck={false}
                   />
                   <p className="settings-hint">
-                    Get a free key at <code>build.nvidia.com</code> → Login → API Catalog → any vision model → "Get API Key".
+                    <code>build.nvidia.com</code> → any model → "Get API Key". Some Meta models are EU-blocked — try Phi or Qwen if you're in Europe.
                   </p>
                 </div>
 
@@ -1855,7 +1906,7 @@ function App() {
                     value={nvidiaModelInput}
                     onChange={e => setNvidiaModelInput(e.target.value)}
                   >
-                    {availableModels.map(m => (
+                    {availableNvidiaModels.map(m => (
                       <option key={m.id} value={m.id}>{m.label}</option>
                     ))}
                   </select>
@@ -1869,8 +1920,13 @@ function App() {
                 setSavingSettings(true)
                 setBackendUrl(backendUrlInput)
                 try {
-                  const body: any = { engine: engineInput, nvidia_model: nvidiaModelInput }
+                  const body: any = {
+                    engine: engineInput,
+                    nvidia_model: nvidiaModelInput,
+                    gemini_model: geminiModelInput,
+                  }
                   if (nvidiaKeyInput.trim()) body.nvidia_api_key = nvidiaKeyInput.trim()
+                  if (geminiKeyInput.trim()) body.gemini_api_key = geminiKeyInput.trim()
                   await apiFetch('/api/settings', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },

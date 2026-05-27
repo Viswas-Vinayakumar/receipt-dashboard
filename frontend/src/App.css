@@ -3030,6 +3030,24 @@ html.dark .tx-row { background: rgba(255,255,255,0.03); border-color: rgba(255,2
   gap: 8px;
 }
 
+.settings-segmented-3 {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+@media (max-width: 500px) {
+  .settings-segmented-3 {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .settings-segmented-3 .settings-seg {
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+  }
+  .settings-segmented-3 .settings-seg strong { flex: 0 0 auto; }
+  .settings-segmented-3 .settings-seg span   { flex: 1; text-align: right; }
+}
+
 .settings-seg {
   display: flex;
   flex-direction: column;

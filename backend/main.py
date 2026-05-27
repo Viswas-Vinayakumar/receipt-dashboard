@@ -39,12 +39,15 @@ OLLAMA_MODEL = "gemma4:e4b"
 
 # NVIDIA NIM (OpenAI-compatible) free cloud vision API
 NVIDIA_BASE_URL  = "https://integrate.api.nvidia.com/v1"
-# Default → reliably-free vision model (Llama 3.2 90B Vision). Qwen 3.5 VLM is newer/better
-# but availability on free tier shifts; users can switch via Settings.
-NVIDIA_MODEL      = "meta/llama-3.2-90b-vision-instruct"
-NVIDIA_MODEL_QWEN_NEW = "qwen/qwen3.5-397b-a17b"           # newest Qwen VLM (best if free for you)
-NVIDIA_MODEL_QWEN_OLD = "qwen/qwen2.5-vl-72b-instruct"     # older but solid for German OCR
-NVIDIA_MODEL_FAST = "microsoft/phi-3.5-vision-instruct"    # fastest
+NVIDIA_MODEL      = "meta/llama-3.2-90b-vision-instruct"   # geo-blocked in EU
+NVIDIA_MODEL_QWEN_NEW = "qwen/qwen3.5-397b-a17b"           # usually EU-available
+NVIDIA_MODEL_QWEN_OLD = "qwen/qwen2.5-vl-72b-instruct"
+NVIDIA_MODEL_FAST = "microsoft/phi-3.5-vision-instruct"    # EU-available, fast
+
+# Google Gemini — works in EU/Germany, generous free tier (1500 req/day)
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+GEMINI_MODEL    = "gemini-2.0-flash"                       # fast, multimodal, free tier
+GEMINI_MODEL_PRO = "gemini-2.5-pro"                        # best quality, slower
 
 # Settings file — persists user's chosen engine + NVIDIA API key
 SETTINGS_PATH = os.path.expanduser("~/receipt-dashboard/app_data/settings.json")
@@ -67,6 +70,9 @@ def _get_engine() -> str:
 
 def _get_nvidia_key() -> str:
     return _load_settings().get("nvidia_api_key", "") or os.environ.get("NVIDIA_API_KEY", "")
+
+def _get_gemini_key() -> str:
+    return _load_settings().get("gemini_api_key", "") or os.environ.get("GEMINI_API_KEY", "")
 
 # ── Database ───────────────────────────────────────────────────────────────
 try:
@@ -412,11 +418,85 @@ def call_nvidia(image_data: bytes) -> dict:
     raise ValueError("Unexpected exit from call_nvidia")
 
 
+def call_gemini(image_data: bytes) -> dict:
+    """Google Gemini API. Works in EU. Free tier: 1500 req/day."""
+    api_key = _get_gemini_key()
+    if not api_key:
+        raise HTTPException(status_code=400,
+            detail="Gemini API key not set. Open Settings and paste your key from aistudio.google.com.")
+
+    image_data = preprocess_image(image_data)
+    image_b64  = base64.b64encode(image_data).decode()
+
+    settings = _load_settings()
+    model = settings.get("gemini_model", GEMINI_MODEL)
+
+    # Gemini's generateContent endpoint takes inline base64 image parts
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": PROMPT},
+                {"inline_data": {"mime_type": "image/jpeg", "data": image_b64}},
+            ]
+        }],
+        "generationConfig": {
+            "temperature": 0,
+            "maxOutputTokens": 2048,
+            "responseMimeType": "application/json",
+        },
+    }
+
+    for attempt in range(2):
+        try:
+            with httpx.Client(timeout=60.0) as client:
+                resp = client.post(
+                    f"{GEMINI_BASE_URL}/models/{model}:generateContent?key={api_key}",
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+        except httpx.ConnectError:
+            raise HTTPException(status_code=503,
+                detail="Can't reach Gemini API. Check your internet connection.")
+        except httpx.TimeoutException:
+            raise HTTPException(status_code=504,
+                detail="Gemini API timed out — try again.")
+
+        if resp.status_code == 400 and "API_KEY_INVALID" in resp.text:
+            raise HTTPException(status_code=401,
+                detail="Gemini API key rejected. Check it in Settings.")
+        if resp.status_code == 429:
+            raise HTTPException(status_code=429,
+                detail="Gemini daily quota exhausted (1500/day free). Try again tomorrow or upgrade.")
+        if resp.status_code != 200:
+            raise HTTPException(status_code=500,
+                detail=f"Gemini error {resp.status_code}: {resp.text[:400]}")
+
+        body = resp.json()
+        try:
+            response_text = body["candidates"][0]["content"]["parts"][0]["text"]
+        except (KeyError, IndexError):
+            logger.warning(f"Gemini unexpected response: {body}")
+            response_text = ""
+        logger.info(f"Gemini raw (attempt {attempt+1}, model={model}): {response_text[:500]}")
+
+        try:
+            raw = _extract_json(response_text)
+            return _validate_and_fix(raw)
+        except Exception as e:
+            logger.warning(f"Gemini parse failed attempt {attempt+1}: {e}")
+            if attempt == 1:
+                raise ValueError(f"Could not parse Gemini response after 2 attempts: {e}")
+
+    raise ValueError("Unexpected exit from call_gemini")
+
+
 def call_ai(image_data: bytes) -> dict:
     """Dispatch to whichever AI engine the user has selected."""
     engine = _get_engine()
     if engine == "nvidia":
         return call_nvidia(image_data)
+    if engine == "gemini":
+        return call_gemini(image_data)
     return call_ollama(image_data)
 
 
@@ -471,29 +551,43 @@ async def health_check():
 
 # ── AI engine settings ─────────────────────────────────────────────────────
 class EngineSettings(BaseModel):
-    engine: str | None = None              # "ollama" | "nvidia"
+    engine: str | None = None              # "ollama" | "nvidia" | "gemini"
     nvidia_api_key: str | None = None
     nvidia_model: str | None = None
+    gemini_api_key: str | None = None
+    gemini_model: str | None = None
+
+def _mask_key(k: str) -> str:
+    return (k[:6] + "…" + k[-4:]) if k else ""
 
 @app.get("/api/settings")
 async def get_settings():
     s = _load_settings()
-    key = s.get("nvidia_api_key", "")
+    nv_key  = s.get("nvidia_api_key", "")
+    gem_key = s.get("gemini_api_key", "")
     return {
-        "engine": s.get("engine", "ollama"),
+        "engine":       s.get("engine", "ollama"),
         "nvidia_model": s.get("nvidia_model", NVIDIA_MODEL),
-        # Never return the full key — just a masked preview so UI can show "set / not set"
-        "nvidia_key_set":     bool(key),
-        "nvidia_key_preview": (key[:6] + "…" + key[-4:]) if key else "",
+        "gemini_model": s.get("gemini_model", GEMINI_MODEL),
+        # Never return full keys — just masked previews
+        "nvidia_key_set":     bool(nv_key),
+        "nvidia_key_preview": _mask_key(nv_key),
+        "gemini_key_set":     bool(gem_key),
+        "gemini_key_preview": _mask_key(gem_key),
         "available_engines": [
-            {"id": "ollama", "label": "Ollama (local Mac)", "needs_key": False},
-            {"id": "nvidia", "label": "NVIDIA Cloud (fast)", "needs_key": True},
+            {"id": "ollama", "label": "Ollama (local Mac)",   "needs_key": False, "note": "Slow but private"},
+            {"id": "gemini", "label": "Google Gemini (free)", "needs_key": True,  "note": "Free 1500/day · works in EU"},
+            {"id": "nvidia", "label": "NVIDIA Cloud",          "needs_key": True, "note": "Some models geo-blocked in EU"},
         ],
         "available_nvidia_models": [
-            {"id": NVIDIA_MODEL,           "label": "Llama 3.2 90B Vision  ·  reliably free"},
-            {"id": NVIDIA_MODEL_QWEN_NEW,  "label": "Qwen 3.5 VLM 397B  ·  newest, best quality"},
-            {"id": NVIDIA_MODEL_QWEN_OLD,  "label": "Qwen 2.5-VL 72B  ·  great for German"},
-            {"id": NVIDIA_MODEL_FAST,      "label": "Phi 3.5 Vision  ·  fastest"},
+            {"id": NVIDIA_MODEL_FAST,      "label": "Phi 3.5 Vision  ·  EU-OK, fast"},
+            {"id": NVIDIA_MODEL_QWEN_NEW,  "label": "Qwen 3.5 VLM 397B  ·  newest"},
+            {"id": NVIDIA_MODEL_QWEN_OLD,  "label": "Qwen 2.5-VL 72B"},
+            {"id": NVIDIA_MODEL,           "label": "Llama 3.2 90B  ·  ⚠ EU-blocked"},
+        ],
+        "available_gemini_models": [
+            {"id": GEMINI_MODEL,     "label": "Gemini 2.0 Flash  ·  fast, free tier"},
+            {"id": GEMINI_MODEL_PRO, "label": "Gemini 2.5 Pro  ·  best quality"},
         ],
     }
 
@@ -501,15 +595,19 @@ async def get_settings():
 async def update_settings(body: EngineSettings):
     s = _load_settings()
     if body.engine is not None:
-        if body.engine not in ("ollama", "nvidia"):
-            raise HTTPException(400, "engine must be 'ollama' or 'nvidia'")
+        if body.engine not in ("ollama", "nvidia", "gemini"):
+            raise HTTPException(400, "engine must be 'ollama', 'nvidia', or 'gemini'")
         s["engine"] = body.engine
     if body.nvidia_api_key is not None:
         s["nvidia_api_key"] = body.nvidia_api_key.strip()
     if body.nvidia_model is not None:
         s["nvidia_model"] = body.nvidia_model
+    if body.gemini_api_key is not None:
+        s["gemini_api_key"] = body.gemini_api_key.strip()
+    if body.gemini_model is not None:
+        s["gemini_model"] = body.gemini_model
     _save_settings(s)
-    logger.info(f"Settings updated: engine={s.get('engine')}, has_key={bool(s.get('nvidia_api_key'))}")
+    logger.info(f"Settings updated: engine={s.get('engine')}, nv_key={bool(s.get('nvidia_api_key'))}, gem_key={bool(s.get('gemini_api_key'))}")
     return {"status": "ok", "engine": s.get("engine", "ollama")}
 
 
