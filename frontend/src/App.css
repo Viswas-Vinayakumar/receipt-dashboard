@@ -2901,45 +2901,83 @@ html.dark .anl-correction-chip { background: rgba(175,82,222,0.16); color: #c084
   #root {
     padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
              max(20px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    max-width: 100%;
   }
 
-  /* Stack header vertically on phones, full-width buttons */
+  /* Stack header vertically on phones */
   header {
     flex-direction: column;
     align-items: stretch !important;
     gap: 14px;
   }
+
+  /* Brand + icons on top row, big primary button as its own row */
   .action-bar {
-    display: grid;
-    grid-template-columns: auto auto 1fr 1fr;
-    gap: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
     width: 100%;
+    align-items: center;
   }
-  .action-bar .btn-primary,
-  .action-bar .btn-secondary { width: 100%; }
+  .action-bar .btn-icon {
+    width: 42px;
+    height: 42px;
+    min-width: 42px;
+    padding: 0;
+    font-size: 17px;
+    flex: 0 0 auto;
+  }
+  .action-bar .btn-secondary {
+    flex: 0 0 auto;
+    padding: 10px 16px;
+    font-size: 14px;
+    height: 42px;
+  }
+  .action-bar .btn-primary {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 12px 18px;
+    font-size: 15px;
+    height: 44px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 
   /* Tap-target minimum 44×44 */
-  .btn, .btn-icon, .chart-tab, .insight-row {
+  .chart-tab, .insight-row {
     min-height: 44px;
   }
 
-  /* Stat cards full-width on phones — 2 cols below 640, 1 col below 420 */
+  /* Single column on phones — 2-up looks cramped */
   .dashboard-grid,
-  .dashboard-grid.grid-4 { grid-template-columns: 1fr 1fr; gap: 12px; }
+  .dashboard-grid.grid-4 { grid-template-columns: 1fr; gap: 12px; }
 
-  .stat-card { padding: 16px 18px; }
-  .stat-value { font-size: 26px; }
+  .stat-card { padding: 18px 20px; }
+  .stat-value { font-size: 30px; }
+  h1 { font-size: 26px; line-height: 1.1; }
+  h3 { font-size: 11px; }
 
-  /* Charts shrink */
-  .chart-card { padding: 16px; }
-  h1 { font-size: 22px; }
+  .card { border-radius: 16px; padding: 18px; }
+  .chart-card { padding: 18px; }
 
-  /* Insights chips scroll horizontally */
+  /* Insight chips horizontal scroll, full-bleed edges */
   .stat-chips-row {
     -webkit-overflow-scrolling: touch;
     margin: 0 -16px;
-    padding: 2px 16px;
+    padding: 4px 16px;
+    overflow-x: auto;
+    overflow-y: visible;
   }
+
+  /* Smart-chips look better stacked on phones */
+  .stat-chip { padding: 9px 14px 9px 10px; }
+  .stat-chip-icon { width: 34px; height: 34px; font-size: 17px; }
+
+  /* Modal sized for phone */
+  .modal { max-width: calc(100vw - 32px); padding: 24px 20px; border-radius: 18px; }
+  .modal-actions { flex-direction: column-reverse; gap: 8px; }
+  .modal-actions .btn { width: 100%; }
 
   /* Table on mobile: card-style rows */
   thead { display: none; }
@@ -2954,11 +2992,6 @@ html.dark .anl-correction-chip { background: rgba(175,82,222,0.16); color: #c084
     border: 1px solid rgba(0,0,0,0.06);
   }
   .tx-row td { padding: 0 !important; border: none !important; }
-}
-
-@media (max-width: 420px) {
-  .dashboard-grid,
-  .dashboard-grid.grid-4 { grid-template-columns: 1fr; }
 }
 
 html.dark .tx-row { background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.06); }
