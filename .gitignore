@@ -25,3 +25,6 @@ src-tauri/bin/*
 
 # App runtime data (logs, DB, uploaded receipt images)
 app_data/
+
+# Mobile APK builds (not public yet)
+*.apk
