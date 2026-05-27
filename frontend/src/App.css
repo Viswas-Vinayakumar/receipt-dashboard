@@ -2997,10 +2997,86 @@ html.dark .anl-correction-chip { background: rgba(175,82,222,0.16); color: #c084
 html.dark .tx-row { background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.06); }
 
 /* ── Settings Modal ──────────────────────────────────────────────────────── */
-.settings-modal { max-width: 460px; }
+.settings-modal { max-width: 480px; text-align: left !important; }
+.settings-title { text-align: left; margin: 0 0 18px !important; }
+
+.settings-section { margin-bottom: 18px; }
+.settings-section-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #6e6e75;
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.settings-saved-tag {
+  font-size: 10px;
+  font-weight: 600;
+  color: #16a34a;
+  background: rgba(22,163,74,0.10);
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.settings-segmented {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.settings-seg {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  background: rgba(0,0,0,0.025);
+  border: 1.5px solid rgba(0,0,0,0.08);
+  border-radius: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s;
+}
+.settings-seg strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1d1d1f;
+}
+.settings-seg span {
+  font-size: 11px;
+  color: #86868b;
+}
+.settings-seg.active {
+  background: rgba(0,113,227,0.10);
+  border-color: #0071e3;
+}
+.settings-seg.active strong { color: #0060e6; }
+
+html.dark .settings-section-label { color: #98989f; }
+html.dark .settings-seg {
+  background: rgba(255,255,255,0.03);
+  border-color: rgba(255,255,255,0.08);
+}
+html.dark .settings-seg strong { color: #f0f0f5; }
+html.dark .settings-seg span   { color: #636366; }
+html.dark .settings-seg.active {
+  background: rgba(0,113,227,0.20);
+  border-color: #5aabff;
+}
+html.dark .settings-seg.active strong { color: #7eb8ff; }
+html.dark .settings-saved-tag {
+  background: rgba(48,209,88,0.15);
+  color: #5effa0;
+}
 
 .settings-url-input {
-  margin-top: 16px;
+  margin-top: 0;
   width: 100%;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
   font-size: 14px;

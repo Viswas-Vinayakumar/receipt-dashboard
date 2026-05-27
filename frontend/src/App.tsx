@@ -5,7 +5,9 @@ import {
   ResponsiveContainer, Cell, LabelList,
   LineChart, Line, CartesianGrid,
 } from 'recharts'
+import Mobile from './Mobile'
 import './App.css'
+import './Mobile.css'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface DashboardData {
@@ -179,7 +181,7 @@ function App() {
   const [rateLimitWarn, setRateLimitWarn]     = useState<string | null>(null)
   const [retryAfter, setRetryAfter]           = useState<number | null>(null)
   const [toast, setToast]                     = useState<Toast | null>(null)
-  const [, setConnectionStatus] = useState('Initializing...')
+  const [connectionStatus, setConnectionStatus] = useState('Initializing...')
 
   const retryFilesRef = useRef<File[]>([])
   const retryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -206,6 +208,12 @@ function App() {
   const [showResetModal, setShowResetModal]   = useState(false)
   const [showSettings, setShowSettings]       = useState(false)
   const [backendUrlInput, setBackendUrlInput] = useState(getBackendUrl())
+  const [engineInput, setEngineInput]         = useState<'ollama' | 'nvidia'>('ollama')
+  const [nvidiaKeyInput, setNvidiaKeyInput]   = useState('')
+  const [nvidiaModelInput, setNvidiaModelInput] = useState('meta/llama-3.2-90b-vision-instruct')
+  const [savedKeyPreview, setSavedKeyPreview] = useState('')
+  const [availableModels, setAvailableModels] = useState<{id:string,label:string}[]>([])
+  const [savingSettings, setSavingSettings]   = useState(false)
 
   // ── Table controls ──────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery]         = useState('')
@@ -247,6 +255,24 @@ function App() {
     document.documentElement.classList.toggle('dark', darkMode)
     localStorage.setItem('darkMode', String(darkMode))
   }, [darkMode])
+
+  // ── Mobile mode: set body class so Mobile.css overrides apply ─────────────
+  useEffect(() => {
+    document.body.classList.toggle('m-mode', isMobile)
+  }, [])
+
+  // ── Fetch AI engine settings when settings modal opens ────────────────────
+  useEffect(() => {
+    if (!showSettings) return
+    apiFetch('/api/settings').then(r => r.ok ? r.json() : null).then(s => {
+      if (!s) return
+      setEngineInput(s.engine || 'ollama')
+      setNvidiaModelInput(s.nvidia_model || 'meta/llama-3.2-90b-vision-instruct')
+      setSavedKeyPreview(s.nvidia_key_preview || '')
+      setAvailableModels(s.available_nvidia_models || [])
+      setNvidiaKeyInput('')   // never prefill key — only show preview
+    }).catch(() => {})
+  }, [showSettings])
 
   // ── Keyboard shortcuts ────────────────────────────────────────────────────
   useEffect(() => {
@@ -821,7 +847,34 @@ function App() {
   const manualValid = manualMerchant.trim().length > 0 && manualDate.length === 10
 
   // ── Render ───────────────────────────────────────────────────────────────
+
+  // On mobile we mount the Mobile UI on top of the desktop tree.
+  // Mobile.css hides the desktop chrome via `body.m-mode`, but the modals
+  // (upload, settings, detail, image viewer, toast) inside .app-container
+  // stay visible — they work fine on phone screens.
+  const mobileShell = isMobile ? (
+    <Mobile
+      data={data}
+      insights={insights}
+      analytics={analytics}
+      darkMode={darkMode}
+      connectionStatus={connectionStatus}
+      error={error}
+      toast={toast}
+      onToggleDark={() => setDarkMode(d => !d)}
+      onScan={() => { setUploadMode('scan'); setUploadErr(null); setShowUpload(true) }}
+      onOpenSettings={() => { setBackendUrlInput(getBackendUrl()); setShowSettings(true) }}
+      onRowClick={handleRowClick}
+      onClearError={() => setError(null)}
+      formatDate={formatDate}
+      formatMonth={formatMonth}
+      catColor={catColor}
+    />
+  ) : null
+
   return (
+    <>
+    {mobileShell}
     <div className="app-container">
 
       {/* ── Header ── */}
@@ -1734,37 +1787,102 @@ function App() {
       {showSettings && (
         <div className="modal-overlay" onClick={() => setShowSettings(false)}>
           <div className="modal settings-modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-icon">⚙️</div>
-            <h2 className="modal-title">Backend Connection</h2>
-            <p className="modal-body">
-              {isMobile
-                ? 'Set your Mac\'s LAN IP so this app can reach the Rezet backend running on your Mac. Make sure both devices are on the same WiFi.'
-                : 'The desktop app uses its built-in backend. Only change this if you\'re pointing to a remote server.'}
-            </p>
-            <input
-              type="text"
-              className="form-input settings-url-input"
-              value={backendUrlInput}
-              onChange={e => setBackendUrlInput(e.target.value)}
-              placeholder="http://192.168.1.42:8888"
-              autoFocus
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-            />
-            <p className="settings-hint">
-              Find your Mac's IP: <strong>System Settings → Network → Wi-Fi → Details</strong> (e.g. <code>192.168.1.42</code>).
-              Then enter <code>http://YOUR_IP:8888</code> above.
-            </p>
+            <h2 className="modal-title settings-title">Settings</h2>
+
+            {/* ── Backend connection ── */}
+            <div className="settings-section">
+              <div className="settings-section-label">Backend URL</div>
+              <input
+                type="text"
+                className="form-input settings-url-input"
+                value={backendUrlInput}
+                onChange={e => setBackendUrlInput(e.target.value)}
+                placeholder="http://192.168.1.42:8888"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+              />
+              <p className="settings-hint">
+                {isMobile
+                  ? <>Your Mac's LAN IP + <code>:8888</code>. Both devices must be on the same WiFi.</>
+                  : <>Defaults to <code>http://localhost:8888</code> for the bundled backend.</>}
+              </p>
+            </div>
+
+            {/* ── AI engine ── */}
+            <div className="settings-section">
+              <div className="settings-section-label">AI Engine</div>
+              <div className="settings-segmented">
+                <button
+                  className={`settings-seg ${engineInput === 'ollama' ? 'active' : ''}`}
+                  onClick={() => setEngineInput('ollama')}
+                ><strong>Ollama</strong><span>Local · Slower · Private</span></button>
+                <button
+                  className={`settings-seg ${engineInput === 'nvidia' ? 'active' : ''}`}
+                  onClick={() => setEngineInput('nvidia')}
+                ><strong>NVIDIA Cloud</strong><span>Fast · Free tier</span></button>
+              </div>
+            </div>
+
+            {engineInput === 'nvidia' && (
+              <>
+                <div className="settings-section">
+                  <div className="settings-section-label">
+                    NVIDIA API Key
+                    {savedKeyPreview && (
+                      <span className="settings-saved-tag">Saved: {savedKeyPreview}</span>
+                    )}
+                  </div>
+                  <input
+                    type="password"
+                    className="form-input settings-url-input"
+                    value={nvidiaKeyInput}
+                    onChange={e => setNvidiaKeyInput(e.target.value)}
+                    placeholder={savedKeyPreview ? "(leave empty to keep existing)" : "nvapi-..."}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                  />
+                  <p className="settings-hint">
+                    Get a free key at <code>build.nvidia.com</code> → Login → API Catalog → any vision model → "Get API Key".
+                  </p>
+                </div>
+
+                <div className="settings-section">
+                  <div className="settings-section-label">Model</div>
+                  <select
+                    className="form-input settings-url-input"
+                    value={nvidiaModelInput}
+                    onChange={e => setNvidiaModelInput(e.target.value)}
+                  >
+                    {availableModels.map(m => (
+                      <option key={m.id} value={m.id}>{m.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
+
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setShowSettings(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={() => {
+              <button className="btn btn-primary" disabled={savingSettings} onClick={async () => {
+                setSavingSettings(true)
                 setBackendUrl(backendUrlInput)
+                try {
+                  const body: any = { engine: engineInput, nvidia_model: nvidiaModelInput }
+                  if (nvidiaKeyInput.trim()) body.nvidia_api_key = nvidiaKeyInput.trim()
+                  await apiFetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                  })
+                } catch {}
+                setSavingSettings(false)
                 setShowSettings(false)
                 setError(null)
                 setConnectionStatus('Connecting…')
-                setTimeout(() => fetchData(), 100)
-              }}>Save & Connect</button>
+                setTimeout(() => fetchData(), 150)
+              }}>{savingSettings ? 'Saving…' : 'Save'}</button>
             </div>
           </div>
         </div>
@@ -1788,14 +1906,15 @@ function App() {
         </div>
       )}
 
-      {/* ── Toast ── */}
-      {toast && (
+      {/* ── Toast (desktop only — mobile shows its own) ── */}
+      {toast && !isMobile && (
         <div className="toast">
           <span>{toast.message}</span>
           {toast.onUndo && <button className="undo-btn" onClick={toast.onUndo}>Undo</button>}
         </div>
       )}
     </div>
+    </>
   )
 }
 

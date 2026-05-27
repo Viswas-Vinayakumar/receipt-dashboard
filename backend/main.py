@@ -33,9 +33,36 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.info("Initializing Backend (Ollama local AI)...")
 
-# ── Ollama config ──────────────────────────────────────────────────────────
+# ── AI engine config ───────────────────────────────────────────────────────
 OLLAMA_URL   = "http://localhost:11434"
 OLLAMA_MODEL = "gemma4:e4b"
+
+# NVIDIA NIM (OpenAI-compatible) free cloud vision API
+NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
+NVIDIA_MODEL    = "meta/llama-3.2-90b-vision-instruct"   # strong vision model
+NVIDIA_MODEL_FAST = "microsoft/phi-3.5-vision-instruct"  # faster, lighter
+
+# Settings file — persists user's chosen engine + NVIDIA API key
+SETTINGS_PATH = os.path.expanduser("~/receipt-dashboard/app_data/settings.json")
+
+def _load_settings() -> dict:
+    try:
+        with open(SETTINGS_PATH, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _save_settings(s: dict):
+    os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
+    with open(SETTINGS_PATH, "w") as f:
+        json.dump(s, f, indent=2)
+
+def _get_engine() -> str:
+    """'nvidia' or 'ollama'. Defaults to ollama for backward compat."""
+    return _load_settings().get("engine", "ollama")
+
+def _get_nvidia_key() -> str:
+    return _load_settings().get("nvidia_api_key", "") or os.environ.get("NVIDIA_API_KEY", "")
 
 # ── Database ───────────────────────────────────────────────────────────────
 try:
@@ -309,6 +336,86 @@ def preprocess_image(image_data: bytes) -> bytes:
         return image_data
 
 
+def call_nvidia(image_data: bytes) -> dict:
+    """Call NVIDIA NIM vision API (OpenAI-compatible). Much faster than local Ollama."""
+    api_key = _get_nvidia_key()
+    if not api_key:
+        raise HTTPException(status_code=400,
+            detail="NVIDIA API key not set. Open Settings and paste your key from build.nvidia.com.")
+
+    image_data = preprocess_image(image_data)
+    image_b64  = base64.b64encode(image_data).decode()
+
+    settings = _load_settings()
+    model = settings.get("nvidia_model", NVIDIA_MODEL)
+
+    # OpenAI-compatible payload with vision content
+    payload = {
+        "model": model,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": PROMPT},
+                {"type": "image_url",
+                 "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+            ],
+        }],
+        "temperature": 0,
+        "max_tokens": 1200,
+        "response_format": {"type": "json_object"},
+    }
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+
+    for attempt in range(2):
+        try:
+            with httpx.Client(timeout=60.0) as client:
+                resp = client.post(f"{NVIDIA_BASE_URL}/chat/completions",
+                                   json=payload, headers=headers)
+        except httpx.ConnectError:
+            raise HTTPException(status_code=503,
+                detail="Can't reach NVIDIA API. Check your internet connection.")
+        except httpx.TimeoutException:
+            raise HTTPException(status_code=504,
+                detail="NVIDIA API timed out — try again or switch to a faster model.")
+
+        if resp.status_code == 401:
+            raise HTTPException(status_code=401,
+                detail="NVIDIA API key rejected. Check it in Settings.")
+        if resp.status_code == 429:
+            raise HTTPException(status_code=429,
+                detail="NVIDIA rate limit hit. Wait a moment and retry.")
+        if resp.status_code != 200:
+            raise HTTPException(status_code=500,
+                detail=f"NVIDIA error {resp.status_code}: {resp.text[:400]}")
+
+        body = resp.json()
+        response_text = (body.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
+        logger.info(f"NVIDIA raw (attempt {attempt+1}, model={model}): {response_text[:500]}")
+
+        try:
+            raw = _extract_json(response_text)
+            return _validate_and_fix(raw)
+        except Exception as e:
+            logger.warning(f"NVIDIA parse failed attempt {attempt+1}: {e}")
+            if attempt == 1:
+                raise ValueError(f"Could not parse NVIDIA response after 2 attempts: {e}")
+
+    raise ValueError("Unexpected exit from call_nvidia")
+
+
+def call_ai(image_data: bytes) -> dict:
+    """Dispatch to whichever AI engine the user has selected."""
+    engine = _get_engine()
+    if engine == "nvidia":
+        return call_nvidia(image_data)
+    return call_ollama(image_data)
+
+
 def call_ollama(image_data: bytes) -> dict:
     """Pre-process image, call Ollama, validate result. Retries once on parse error."""
     image_data = preprocess_image(image_data)
@@ -358,6 +465,48 @@ async def health_check():
     return {"status": "ok"}
 
 
+# ── AI engine settings ─────────────────────────────────────────────────────
+class EngineSettings(BaseModel):
+    engine: str | None = None              # "ollama" | "nvidia"
+    nvidia_api_key: str | None = None
+    nvidia_model: str | None = None
+
+@app.get("/api/settings")
+async def get_settings():
+    s = _load_settings()
+    key = s.get("nvidia_api_key", "")
+    return {
+        "engine": s.get("engine", "ollama"),
+        "nvidia_model": s.get("nvidia_model", NVIDIA_MODEL),
+        # Never return the full key — just a masked preview so UI can show "set / not set"
+        "nvidia_key_set":     bool(key),
+        "nvidia_key_preview": (key[:6] + "…" + key[-4:]) if key else "",
+        "available_engines": [
+            {"id": "ollama", "label": "Ollama (local Mac)", "needs_key": False},
+            {"id": "nvidia", "label": "NVIDIA Cloud (fast)", "needs_key": True},
+        ],
+        "available_nvidia_models": [
+            {"id": NVIDIA_MODEL,      "label": "Llama 3.2 90B Vision (best)"},
+            {"id": NVIDIA_MODEL_FAST, "label": "Phi 3.5 Vision (faster)"},
+        ],
+    }
+
+@app.post("/api/settings")
+async def update_settings(body: EngineSettings):
+    s = _load_settings()
+    if body.engine is not None:
+        if body.engine not in ("ollama", "nvidia"):
+            raise HTTPException(400, "engine must be 'ollama' or 'nvidia'")
+        s["engine"] = body.engine
+    if body.nvidia_api_key is not None:
+        s["nvidia_api_key"] = body.nvidia_api_key.strip()
+    if body.nvidia_model is not None:
+        s["nvidia_model"] = body.nvidia_model
+    _save_settings(s)
+    logger.info(f"Settings updated: engine={s.get('engine')}, has_key={bool(s.get('nvidia_api_key'))}")
+    return {"status": "ok", "engine": s.get("engine", "ollama")}
+
+
 @app.post("/api/upload")
 async def upload_receipt(file: UploadFile = File(...), db: Session = Depends(get_db)):
     logger.info(f"Upload: {file.filename}")
@@ -387,8 +536,9 @@ async def upload_receipt(file: UploadFile = File(...), db: Session = Depends(get
                 "amount": existing.total_amount or 0,
             }))
 
-        logger.info(f"Calling Ollama ({OLLAMA_MODEL})...")
-        raw = call_ollama(image_data)
+        engine = _get_engine()
+        logger.info(f"Calling AI engine: {engine}")
+        raw = call_ai(image_data)
         logger.info(f"Parsed: {raw}")
 
         if not raw.get("is_receipt", True):
