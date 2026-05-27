@@ -59,13 +59,16 @@ body.m-mode #root {
 /* ── Top bar ────────────────────────────────────────────────────────── */
 .m-topbar {
   display: flex;
+  flex-direction: row;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: nowrap;
   padding: max(16px, env(safe-area-inset-top)) 20px 12px;
   position: sticky;
   top: 0;
   z-index: 50;
   background: var(--bg);
+  min-height: 60px;
 }
 
 .m-wordmark {
@@ -578,6 +581,112 @@ html.dark .m-nav-fab {
 
 /* ── Spacer ─────────────────────────────────────────────────────────── */
 .m-spacer { height: 104px; }
+
+/* ── Setup / onboarding card ────────────────────────────────────────── */
+.m-setup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 32px 24px 40px;
+  text-align: center;
+}
+
+.m-setup-icon {
+  width: 72px;
+  height: 72px;
+  border-radius: 36px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.m-setup-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--fg);
+  margin: 0 0 10px;
+  letter-spacing: -0.3px;
+}
+
+.m-setup-body {
+  font-size: 14px;
+  color: var(--muted);
+  line-height: 1.6;
+  margin: 0 0 24px;
+  max-width: 300px;
+}
+.m-setup-body strong { color: var(--fg2); font-weight: 600; }
+
+.m-setup-steps {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--sep);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  margin-bottom: 24px;
+  text-align: left;
+}
+html.dark .m-setup-steps { border-color: var(--sep-soft); }
+
+.m-setup-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--sep-soft);
+  font-size: 14px;
+  color: var(--fg2);
+  line-height: 1.5;
+}
+
+.m-setup-n {
+  width: 22px;
+  height: 22px;
+  border-radius: 11px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.m-setup-code {
+  font-family: 'SF Mono', 'Menlo', 'Courier New', monospace;
+  font-size: 13px;
+  background: var(--surface2);
+  color: var(--accent);
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--sep-soft);
+  letter-spacing: 0.2px;
+  word-break: break-all;
+}
+.m-setup-code:last-child { border-bottom: none; }
+
+.m-setup-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 16px;
+  background: var(--fg);
+  color: var(--bg);
+  border: none;
+  border-radius: var(--r-lg);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  letter-spacing: -0.2px;
+}
+html.dark .m-setup-btn { background: #ffffff; color: #000000; }
+.m-setup-btn:active { opacity: 0.8; }
 
 /* ── Hide desktop chrome in mobile mode ─────────────────────────────── */
 body.m-mode .app-container > header,

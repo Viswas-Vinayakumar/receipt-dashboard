@@ -2,6 +2,7 @@
 // Renders when isMobile === true. Reuses backend types and helpers from App.tsx via props.
 
 import { useState, useMemo } from 'react'
+import { isMobile, isLocalBackend } from './api'
 import {
   BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, Cell,
   LineChart, Line, CartesianGrid,
@@ -137,6 +138,9 @@ export default function Mobile(props: MobileProps) {
   const [tab, setTab] = useState<Tab>('home')
   const [query, setQuery] = useState('')
 
+  // Show setup card when on mobile and backend URL is still localhost (not configured)
+  const needsSetup = isMobile && isLocalBackend() && !!error
+
   const filteredReceipts = useMemo(() => {
     if (!data) return []
     const q = query.trim().toLowerCase()
@@ -151,12 +155,12 @@ export default function Mobile(props: MobileProps) {
   return (
     <div className="m-app">
       {/* Top bar */}
-      <header className="m-topbar">
+      <div className="m-topbar">
         <span className="m-wordmark">Rezet</span>
         <button className="m-icon-btn" onClick={onToggleDark} aria-label="Toggle theme">
           {darkMode ? <IconSun /> : <IconMoon />}
         </button>
-      </header>
+      </div>
 
       {/* Status notices */}
       {connectionStatus && connectionStatus !== 'Active' && (
@@ -173,10 +177,13 @@ export default function Mobile(props: MobileProps) {
 
       {/* Page content */}
       <main className="m-scroll">
-        {tab === 'home'     && <HomeTab data={data} onRowClick={onRowClick} formatDate={formatDate} formatMonth={formatMonth} catColor={catColor} darkMode={darkMode} />}
-        {tab === 'receipts' && <ReceiptsTab data={data} query={query} setQuery={setQuery} receipts={filteredReceipts} onRowClick={onRowClick} formatDate={formatDate} catColor={catColor} />}
-        {tab === 'insights' && <InsightsTab insights={insights} data={data} catColor={catColor} />}
-        {tab === 'settings' && <SettingsTab onOpenSettings={onOpenSettings} darkMode={darkMode} onToggleDark={onToggleDark} />}
+        {needsSetup && tab !== 'settings'
+          ? <SetupCard onOpenSettings={() => { setTab('settings'); onOpenSettings() }} />
+          : tab === 'home'     ? <HomeTab data={data} onRowClick={onRowClick} formatDate={formatDate} formatMonth={formatMonth} catColor={catColor} darkMode={darkMode} />
+          : tab === 'receipts' ? <ReceiptsTab data={data} query={query} setQuery={setQuery} receipts={filteredReceipts} onRowClick={onRowClick} formatDate={formatDate} catColor={catColor} />
+          : tab === 'insights' ? <InsightsTab insights={insights} data={data} catColor={catColor} />
+          : <SettingsTab onOpenSettings={onOpenSettings} darkMode={darkMode} onToggleDark={onToggleDark} />
+        }
       </main>
 
       {/* Bottom nav — FAB in center slot */}
@@ -193,6 +200,53 @@ export default function Mobile(props: MobileProps) {
       </nav>
 
       {toast && <div className="m-toast">{toast.message}</div>}
+    </div>
+  )
+}
+
+// ── Setup card (shown when backend URL is still localhost on mobile) ──────────
+function SetupCard({ onOpenSettings }: { onOpenSettings: () => void }) {
+  return (
+    <div className="m-setup">
+      <div className="m-setup-icon">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
+          <path d="M5 12.55a11 11 0 0 1 14.08 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+          <path d="M1.42 9a16 16 0 0 1 21.16 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+          <path d="M8.53 16.11a6 6 0 0 1 6.95 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+          <circle cx="12" cy="20" r="1" fill="currentColor"/>
+        </svg>
+      </div>
+
+      <p className="m-setup-title">Connect to your Mac</p>
+      <p className="m-setup-body">
+        Rezet's AI runs on your Mac. The app needs your Mac's local IP address to connect — <strong>localhost</strong> won't work from a phone.
+      </p>
+
+      <div className="m-setup-steps">
+        <div className="m-setup-step">
+          <span className="m-setup-n">1</span>
+          <span>On your Mac, open Terminal and run:</span>
+        </div>
+        <div className="m-setup-code">ipconfig getifaddr en0</div>
+
+        <div className="m-setup-step">
+          <span className="m-setup-n">2</span>
+          <span>Make sure Rezet is open and running on the Mac</span>
+        </div>
+
+        <div className="m-setup-step">
+          <span className="m-setup-n">3</span>
+          <span>Tap the button below and enter the IP, e.g.:</span>
+        </div>
+        <div className="m-setup-code">http://192.168.1.42:8888</div>
+      </div>
+
+      <button className="m-setup-btn" onClick={onOpenSettings}>
+        Open Settings
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ marginLeft: 6 }}>
+          <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </button>
     </div>
   )
 }
