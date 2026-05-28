@@ -1,11 +1,11 @@
-// Mobile UI — clean minimal redesign.
+// Mobile UI — polished redesign with animations.
 // Renders when isMobile === true. Reuses backend types and helpers from App.tsx via props.
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { isMobile, isLocalBackend } from './api'
 import {
   BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, Cell,
-  LineChart, Line, CartesianGrid,
+  CartesianGrid, Area, AreaChart,
 } from 'recharts'
 
 // ── Public types ─────────────────────────────────────────────────────────────
@@ -40,14 +40,32 @@ export interface MobileProps {
 
 type Tab = 'home' | 'receipts' | 'insights' | 'settings'
 const fmtMoney = (n: number) => `€${n.toFixed(2)}`
-
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-function currentMonth() { return MONTHS[new Date().getMonth()] }
+const currentMonth = () => MONTHS[new Date().getMonth()]
 
-// ── SVG helpers ──────────────────────────────────────────────────────────────
+// ── Hook: smooth count-up animation ──────────────────────────────────────────
+function useCountUp(target: number, duration = 750): number {
+  const [val, setVal] = useState(0)
+  const raf = useRef<number>(0)
+  useEffect(() => {
+    const start = performance.now()
+    const from = 0
+    const step = (now: number) => {
+      const p = Math.min((now - start) / duration, 1)
+      const eased = 1 - Math.pow(1 - p, 3)
+      setVal(from + (target - from) * eased)
+      if (p < 1) raf.current = requestAnimationFrame(step)
+    }
+    raf.current = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(raf.current)
+  }, [target])
+  return val
+}
+
+// ── SVG Icons ────────────────────────────────────────────────────────────────
 function NavIcon({ name, active }: { name: string; active: boolean }) {
   const sw = active ? 2.2 : 1.7
-  const c = 'currentColor'
+  const c  = 'currentColor'
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
       {name === 'home' && (
@@ -72,55 +90,46 @@ function NavIcon({ name, active }: { name: string; active: boolean }) {
   )
 }
 
-function IconChevron() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-      <path d="M9 18l6-6-6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-    </svg>
-  )
-}
+const ChevronRight = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+    <path d="M9 18l6-6-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+)
 
-function IconSearch() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-      <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.8"/>
-      <path d="M21 21l-4.35-4.35" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
-    </svg>
-  )
-}
+const SearchIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+    <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.8"/>
+    <path d="M21 21l-4.35-4.35" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+  </svg>
+)
 
-function IconClose() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-      <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-    </svg>
-  )
-}
+const CloseIcon = () => (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+    <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
+  </svg>
+)
 
-function IconSun() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-      <circle cx="12" cy="12" r="4" stroke="currentColor" strokeWidth="1.8"/>
-      <path d="M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"
-        stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
-    </svg>
-  )
-}
+const SunIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+    <circle cx="12" cy="12" r="4" stroke="currentColor" strokeWidth="1.8"/>
+    <path d="M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"
+      stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+  </svg>
+)
 
-function IconMoon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"
-        stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-    </svg>
-  )
-}
+const MoonIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"
+      stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+)
 
 // ── Nav item ─────────────────────────────────────────────────────────────────
 function NavItem({ name, label, active, onClick }:
   { name: string; label: string; active: boolean; onClick: () => void }) {
   return (
     <button className={`m-navitem${active ? ' m-navitem--active' : ''}`} onClick={onClick}>
+      {active && <span className="m-nav-pip" />}
       <NavIcon name={name} active={active} />
       <span>{label}</span>
     </button>
@@ -135,11 +144,17 @@ export default function Mobile(props: MobileProps) {
     formatDate, formatMonth, catColor, toast,
   } = props
 
-  const [tab, setTab] = useState<Tab>('home')
-  const [query, setQuery] = useState('')
+  const [tab, setTab]       = useState<Tab>('home')
+  const [pageKey, setPageKey] = useState(0)
+  const [query, setQuery]   = useState('')
 
-  // Show setup card when on mobile and backend URL is still localhost (not configured)
   const needsSetup = isMobile && isLocalBackend() && !!error
+
+  function switchTab(t: Tab) {
+    if (t === tab) return
+    setTab(t)
+    setPageKey(k => k + 1)
+  }
 
   const filteredReceipts = useMemo(() => {
     if (!data) return []
@@ -158,7 +173,7 @@ export default function Mobile(props: MobileProps) {
       <div className="m-topbar">
         <span className="m-wordmark">Rezet</span>
         <button className="m-icon-btn" onClick={onToggleDark} aria-label="Toggle theme">
-          {darkMode ? <IconSun /> : <IconMoon />}
+          {darkMode ? <SunIcon /> : <MoonIcon />}
         </button>
       </div>
 
@@ -169,7 +184,7 @@ export default function Mobile(props: MobileProps) {
           {connectionStatus}
         </div>
       )}
-      {error && (
+      {error && !needsSetup && (
         <div className="m-notice m-notice--error" onClick={onClearError}>
           {error.split('\n')[0]}
         </div>
@@ -177,26 +192,28 @@ export default function Mobile(props: MobileProps) {
 
       {/* Page content */}
       <main className="m-scroll">
-        {needsSetup && tab !== 'settings'
-          ? <SetupCard onOpenSettings={() => { setTab('settings'); onOpenSettings() }} />
-          : tab === 'home'     ? <HomeTab data={data} onRowClick={onRowClick} formatDate={formatDate} formatMonth={formatMonth} catColor={catColor} darkMode={darkMode} />
-          : tab === 'receipts' ? <ReceiptsTab data={data} query={query} setQuery={setQuery} receipts={filteredReceipts} onRowClick={onRowClick} formatDate={formatDate} catColor={catColor} />
-          : tab === 'insights' ? <InsightsTab insights={insights} data={data} catColor={catColor} />
-          : <SettingsTab onOpenSettings={onOpenSettings} darkMode={darkMode} onToggleDark={onToggleDark} />
-        }
+        <div className="m-page" key={pageKey}>
+          {needsSetup && tab !== 'settings'
+            ? <SetupCard onOpenSettings={() => { switchTab('settings'); onOpenSettings() }} />
+            : tab === 'home'     ? <HomeTab data={data} onRowClick={onRowClick} formatDate={formatDate} formatMonth={formatMonth} catColor={catColor} darkMode={darkMode} />
+            : tab === 'receipts' ? <ReceiptsTab data={data} query={query} setQuery={setQuery} receipts={filteredReceipts} onRowClick={onRowClick} formatDate={formatDate} catColor={catColor} />
+            : tab === 'insights' ? <InsightsTab insights={insights} data={data} catColor={catColor} />
+            : <SettingsTab onOpenSettings={onOpenSettings} darkMode={darkMode} onToggleDark={onToggleDark} />
+          }
+        </div>
       </main>
 
       {/* Bottom nav — FAB in center slot */}
       <nav className="m-nav">
-        <NavItem name="home"    label="Home"     active={tab==='home'}     onClick={() => setTab('home')} />
-        <NavItem name="receipt" label="Receipts" active={tab==='receipts'} onClick={() => setTab('receipts')} />
+        <NavItem name="home"    label="Home"     active={tab==='home'}     onClick={() => switchTab('home')} />
+        <NavItem name="receipt" label="Receipts" active={tab==='receipts'} onClick={() => switchTab('receipts')} />
         <button className="m-nav-fab" onClick={onScan} aria-label="Add receipt">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
             <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
           </svg>
         </button>
-        <NavItem name="chart"   label="Insights" active={tab==='insights'} onClick={() => setTab('insights')} />
-        <NavItem name="gear"    label="Settings" active={tab==='settings'} onClick={() => setTab('settings')} />
+        <NavItem name="chart"   label="Insights" active={tab==='insights'} onClick={() => switchTab('insights')} />
+        <NavItem name="gear"    label="Settings" active={tab==='settings'} onClick={() => switchTab('settings')} />
       </nav>
 
       {toast && <div className="m-toast">{toast.message}</div>}
@@ -204,47 +221,42 @@ export default function Mobile(props: MobileProps) {
   )
 }
 
-// ── Setup card (shown when backend URL is still localhost on mobile) ──────────
+// ── Setup card ───────────────────────────────────────────────────────────────
 function SetupCard({ onOpenSettings }: { onOpenSettings: () => void }) {
   return (
     <div className="m-setup">
       <div className="m-setup-icon">
-        <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
-          <path d="M5 12.55a11 11 0 0 1 14.08 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
-          <path d="M1.42 9a16 16 0 0 1 21.16 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
-          <path d="M8.53 16.11a6 6 0 0 1 6.95 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
-          <circle cx="12" cy="20" r="1" fill="currentColor"/>
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
+          <path className="m-wifi-3" d="M5 12.55a11 11 0 0 1 14.08 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+          <path className="m-wifi-2" d="M1.42 9a16 16 0 0 1 21.16 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+          <path className="m-wifi-1" d="M8.53 16.11a6 6 0 0 1 6.95 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+          <circle cx="12" cy="20" r="1.2" fill="currentColor"/>
         </svg>
       </div>
-
       <p className="m-setup-title">Connect to your Mac</p>
       <p className="m-setup-body">
-        Rezet's AI runs on your Mac. The app needs your Mac's local IP address to connect — <strong>localhost</strong> won't work from a phone.
+        Rezet's AI runs on your Mac. <strong>localhost</strong> won't work from a phone — you need your Mac's local IP.
       </p>
-
       <div className="m-setup-steps">
         <div className="m-setup-step">
           <span className="m-setup-n">1</span>
           <span>On your Mac, open Terminal and run:</span>
         </div>
         <div className="m-setup-code">ipconfig getifaddr en0</div>
-
         <div className="m-setup-step">
           <span className="m-setup-n">2</span>
           <span>Make sure Rezet is open and running on the Mac</span>
         </div>
-
         <div className="m-setup-step">
           <span className="m-setup-n">3</span>
-          <span>Tap the button below and enter the IP, e.g.:</span>
+          <span>Tap below and enter the IP, e.g.:</span>
         </div>
         <div className="m-setup-code">http://192.168.1.42:8888</div>
       </div>
-
       <button className="m-setup-btn" onClick={onOpenSettings}>
         Open Settings
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ marginLeft: 6 }}>
-          <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
         </svg>
       </button>
     </div>
@@ -253,39 +265,62 @@ function SetupCard({ onOpenSettings }: { onOpenSettings: () => void }) {
 
 // ── Home tab ─────────────────────────────────────────────────────────────────
 function HomeTab({ data, onRowClick, formatDate, formatMonth, catColor, darkMode }: any) {
+  const mom = data?.mom
+  const animAmount = useCountUp(mom?.current_total ?? 0, 800)
+
   if (!data) return (
     <div className="m-empty">
-      <p className="m-empty-title">Loading…</p>
-      <p className="m-empty-sub">Connecting to backend</p>
+      <div className="m-skeleton m-skeleton-hero" />
+      <div className="m-skeleton-row">
+        <div className="m-skeleton m-skeleton-card" />
+        <div className="m-skeleton m-skeleton-card" />
+      </div>
+      <div className="m-skeleton-row">
+        <div className="m-skeleton m-skeleton-card" />
+        <div className="m-skeleton m-skeleton-card" />
+      </div>
     </div>
   )
 
   if (!data.recent_receipts.length) return (
     <div className="m-empty">
+      <div className="m-empty-glyph">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none">
+          <path d="M6 3h12v18l-2-1.5L14 21l-2-1.5L10 21l-2-1.5L6 21V3z"
+            stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
+          <path d="M9 8h6M9 12h6M9 16h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+        </svg>
+      </div>
       <p className="m-empty-title">No receipts yet</p>
       <p className="m-empty-sub">Tap + to scan your first receipt</p>
     </div>
   )
 
-  const mom = data.mom
   const useDaily = data.monthly_trend.length <= 1 && (data.daily_trend?.length ?? 0) > 0
   const trendData = useDaily
     ? data.daily_trend.map((d: any) => ({ ...d, label: formatDate(d.date).slice(0, 6) }))
     : data.monthly_trend.map((m: any) => ({ ...m, label: formatMonth(m.month) }))
 
-  const gridColor = darkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'
-  const tickColor = darkMode ? '#636366' : '#aeaeb2'
-  const ttStyle  = { background: darkMode ? '#1c1c1e' : '#fff', border: 'none', borderRadius: 10, fontSize: 12, color: darkMode ? '#fff' : '#1c1c1e' }
+  const gridColor = darkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)'
+  const tickColor = darkMode ? '#48484a' : '#c7c7cc'
+  const ttStyle  = {
+    background: darkMode ? '#2c2c2e' : '#fff',
+    border: 'none',
+    borderRadius: 10,
+    fontSize: 12,
+    color: darkMode ? '#fff' : '#1c1c1e',
+    boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+  }
 
   return (
     <>
       {/* Hero */}
       <div className="m-hero">
         <p className="m-hero-eyebrow">{currentMonth()} spending</p>
-        <p className="m-hero-amount">{fmtMoney(mom?.current_total ?? 0)}</p>
+        <p className="m-hero-amount">€{animAmount.toFixed(2)}</p>
         <div className="m-hero-sub">
           <span>{mom?.current_receipt_count ?? 0} receipts</span>
-          {mom?.delta_pct != null && mom.prev_total > 0 && (
+          {mom?.delta_pct != null && (mom.prev_total ?? 0) > 0 && (
             <span className={`m-delta ${mom.delta_pct > 0 ? 'm-delta--up' : 'm-delta--down'}`}>
               {mom.delta_pct > 0 ? '↑' : '↓'}{Math.abs(mom.delta_pct).toFixed(0)}% vs last month
             </span>
@@ -321,18 +356,25 @@ function HomeTab({ data, onRowClick, formatDate, formatMonth, catColor, darkMode
             <BarChart data={trendData} margin={{ top: 8, right: 4, left: -22, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
               <XAxis dataKey="label" tick={{ fontSize: 10, fill: tickColor }} axisLine={false} tickLine={false} />
-              <Tooltip cursor={{ fill: darkMode ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)' }} contentStyle={ttStyle} />
+              <Tooltip cursor={{ fill: darkMode ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)' }} contentStyle={ttStyle} />
               <Bar dataKey="total" radius={[5,5,0,0]}>
                 {trendData.map((_: any, i: number) => <Cell key={i} fill="#34c759" fillOpacity={0.85} />)}
               </Bar>
             </BarChart>
           ) : (
-            <LineChart data={trendData} margin={{ top: 8, right: 4, left: -22, bottom: 0 }}>
+            <AreaChart data={trendData} margin={{ top: 8, right: 4, left: -22, bottom: 0 }}>
+              <defs>
+                <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#34c759" stopOpacity={0.25}/>
+                  <stop offset="100%" stopColor="#34c759" stopOpacity={0}/>
+                </linearGradient>
+              </defs>
               <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
               <XAxis dataKey="label" tick={{ fontSize: 10, fill: tickColor }} axisLine={false} tickLine={false} />
               <Tooltip contentStyle={ttStyle} />
-              <Line type="monotone" dataKey="total" stroke="#34c759" strokeWidth={2.5} dot={false} />
-            </LineChart>
+              <Area type="monotone" dataKey="total" stroke="#34c759" strokeWidth={2.5}
+                fill="url(#areaGrad)" dot={false} activeDot={{ r: 4, fill: '#34c759', strokeWidth: 0 }} />
+            </AreaChart>
           )}
         </ResponsiveContainer>
       </div>
@@ -342,16 +384,20 @@ function HomeTab({ data, onRowClick, formatDate, formatMonth, catColor, darkMode
       <div className="m-list">
         {data.recent_receipts.slice(0, 6).map((r: any) => (
           <button key={r.id} className="m-row" onClick={() => onRowClick(r.id)}>
-            <div className="m-row-dot" style={{ background: catColor(r.category) }} />
+            <div className="m-row-avatar" style={{ background: catColor(r.category) + '22' }}>
+              <div className="m-row-dot" style={{ background: catColor(r.category) }} />
+            </div>
             <div className="m-row-body">
               <p className="m-row-title">{r.merchant || 'Unknown'}</p>
               <p className="m-row-sub">{r.category} · {formatDate(r.date)}</p>
             </div>
-            <p className="m-row-amount">{fmtMoney(r.total_amount)}</p>
+            <div className="m-row-right">
+              <p className="m-row-amount">{fmtMoney(r.total_amount)}</p>
+              <ChevronRight />
+            </div>
           </button>
         ))}
       </div>
-
       <div className="m-spacer" />
     </>
   )
@@ -362,7 +408,7 @@ function ReceiptsTab({ query, setQuery, receipts, onRowClick, formatDate, catCol
   return (
     <>
       <div className="m-search">
-        <IconSearch />
+        <SearchIcon />
         <input
           type="text"
           placeholder="Merchants, categories…"
@@ -373,13 +419,19 @@ function ReceiptsTab({ query, setQuery, receipts, onRowClick, formatDate, catCol
         />
         {query && (
           <button className="m-search-clear" onClick={() => setQuery('')}>
-            <IconClose />
+            <CloseIcon />
           </button>
         )}
       </div>
 
       {receipts.length === 0 ? (
         <div className="m-empty">
+          <div className="m-empty-glyph">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
+              <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.5"/>
+              <path d="M21 21l-4.35-4.35" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+          </div>
           <p className="m-empty-title">{query ? 'No matches' : 'No receipts yet'}</p>
           <p className="m-empty-sub">{query ? 'Try a different search term' : 'Tap + to add one'}</p>
         </div>
@@ -387,14 +439,19 @@ function ReceiptsTab({ query, setQuery, receipts, onRowClick, formatDate, catCol
         <div className="m-list">
           {receipts.map((r: any) => (
             <button key={r.id} className="m-row" onClick={() => onRowClick(r.id)}>
-              <div className="m-row-dot" style={{ background: catColor(r.category) }} />
+              <div className="m-row-avatar" style={{ background: catColor(r.category) + '22' }}>
+                <div className="m-row-dot" style={{ background: catColor(r.category) }} />
+              </div>
               <div className="m-row-body">
                 <p className="m-row-title">{r.merchant || 'Unknown'}</p>
                 <p className="m-row-sub">
                   {r.category} · {formatDate(r.date)}{r.has_image ? ' · 📷' : ''}
                 </p>
               </div>
-              <p className="m-row-amount">{fmtMoney(r.total_amount)}</p>
+              <div className="m-row-right">
+                <p className="m-row-amount">{fmtMoney(r.total_amount)}</p>
+                <ChevronRight />
+              </div>
             </button>
           ))}
         </div>
@@ -424,8 +481,8 @@ function InsightsTab({ insights, data, catColor }: any) {
         <>
           <p className="m-label">By Category</p>
           <div className="m-card">
-            {cats.map((c: any) => (
-              <div key={c.name} className="m-bar-row">
+            {cats.map((c: any, i: number) => (
+              <div key={c.name} className="m-bar-row" style={{ animationDelay: `${i * 0.05}s` }}>
                 <div className="m-bar-header">
                   <span className="m-bar-name">
                     <span className="m-dot" style={{ background: catColor(c.name) }} />
@@ -483,40 +540,37 @@ function InsightsTab({ insights, data, catColor }: any) {
 }
 
 // ── Settings tab ─────────────────────────────────────────────────────────────
+function SettingsRow({ icon, label, value, onClick }: { icon: string; label: string; value?: string; onClick?: () => void }) {
+  const el = (
+    <div className={`m-setting-row${onClick ? ' m-setting-row--btn' : ''}`}
+      onClick={onClick} role={onClick ? 'button' : undefined}>
+      <span className="m-setting-icon">{icon}</span>
+      <span className="m-setting-label">{label}</span>
+      {value && <span className="m-setting-value">{value}</span>}
+      {onClick && <span className="m-setting-chev"><ChevronRight /></span>}
+    </div>
+  )
+  return el
+}
+
 function SettingsTab({ onOpenSettings, darkMode, onToggleDark }: any) {
   return (
     <>
       <p className="m-label">Appearance</p>
       <div className="m-card">
-        <button className="m-setting-row" onClick={onToggleDark}>
-          <span className="m-setting-label">Theme</span>
-          <span className="m-setting-value">{darkMode ? 'Dark' : 'Light'}</span>
-          <IconChevron />
-        </button>
+        <SettingsRow icon="🎨" label="Theme" value={darkMode ? 'Dark' : 'Light'} onClick={onToggleDark} />
       </div>
 
       <p className="m-label">AI & Connection</p>
       <div className="m-card">
-        <button className="m-setting-row" onClick={onOpenSettings}>
-          <span className="m-setting-label">Backend & AI Engine</span>
-          <IconChevron />
-        </button>
+        <SettingsRow icon="🔗" label="Backend & AI Engine" onClick={onOpenSettings} />
       </div>
 
       <p className="m-label">About</p>
       <div className="m-card">
-        <div className="m-info-row">
-          <span className="m-setting-label">App</span>
-          <span className="m-setting-value">Rezet</span>
-        </div>
-        <div className="m-info-row">
-          <span className="m-setting-label">Version</span>
-          <span className="m-setting-value">0.3.0</span>
-        </div>
-        <div className="m-info-row m-info-row--last">
-          <span className="m-setting-label">Stack</span>
-          <span className="m-setting-value">React · Capacitor</span>
-        </div>
+        <SettingsRow icon="📱" label="App" value="Rezet" />
+        <SettingsRow icon="🏷" label="Version" value="0.3.0" />
+        <SettingsRow icon="⚙️" label="Stack" value="React · Capacitor" />
       </div>
 
       <div className="m-spacer" />
